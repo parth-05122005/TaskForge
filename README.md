@@ -184,7 +184,7 @@ Main routes:
 - Auth: `POST /api/auth/register`, `POST /api/auth/login`
 - Jobs: `POST/GET /api/jobs`, `GET/PUT/DELETE /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/trigger`, `GET /api/jobs/{id}/executions`
 - Workers (admin only): paginated/filterable `GET /api/workers?page=0&size=20&status=BUSY`, `GET /api/workers/{id}`
-- Dashboard snapshot: initial `GET /api/dashboard/snapshot?since=<ISO-8601 timestamp>`, then incremental `GET /api/dashboard/snapshot?afterId=<last-event-id>`; job rows are paged with `jobPage`/`jobSize` and include `totalJobs`, while admins can page workers with `workerPage`/`workerSize`
+- Dashboard snapshot: initial `GET /api/dashboard/snapshot?since=<ISO-8601 timestamp>`, then incremental `GET /api/dashboard/snapshot?afterId=<last-event-id>`; job rows support the optional `status` filter, are paged with `jobPage`/`jobSize`, and include `totalJobs`, while admins can page workers with `workerPage`/`workerSize`
 - Admin: `GET /api/admin/statistics`, `GET /api/admin/jobs`, paginated/filterable `GET /api/admin/workers?page=0&size=20&status=BUSY`, `GET /api/admin/audit`, `POST /api/admin/users/{id}/disable`
 - Observability: `/actuator/health`, `/actuator/info`, `/actuator/metrics`, `/actuator/prometheus`
 

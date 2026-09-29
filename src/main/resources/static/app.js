@@ -10,6 +10,7 @@ let refreshPending = false;
 let historyJob = null;
 let workerPage = 0;
 let jobPage = 0;
+let jobStatus = "";
 const workerPageSize = 25;
 const jobPageSize = 25;
 
@@ -32,6 +33,8 @@ function clearPrivateDashboard() {
   $("#worker-count").textContent = "0 total";
   $("#worker-panel").classList.add("hidden");
   jobPage = 0;
+  jobStatus = "";
+  $("#job-status-filter").value = "";
   $("#job-detail").close();
 }
 
@@ -76,6 +79,8 @@ function render(snapshot) {
   });
   const tbody = $("#jobs"); tbody.replaceChildren();
   jobPage = snapshot.jobPage;
+  jobStatus = snapshot.jobStatus || "";
+  $("#job-status-filter").value = jobStatus;
   $("#job-count").textContent = `Page ${snapshot.jobPage + 1} · ${snapshot.jobs.length} shown`;
   $("#job-total").textContent = `${snapshot.totalJobs} total`;
   if (!snapshot.jobs.length) {
@@ -137,8 +142,9 @@ async function refresh() {
   if (refreshing) { refreshPending=true; return; }
   refreshing = true;
   const eventQuery = eventCursor ? `afterId=${eventCursor}` : `since=${encodeURIComponent(initialSince)}`;
-  const query = `${eventQuery}&workerPage=${workerPage}&workerSize=${workerPageSize}&jobPage=${jobPage}&jobSize=${jobPageSize}`;
-  try { const data = await api(`/api/dashboard/snapshot?${query}`); if(sessionStorage.getItem(tokenKey)===currentToken&&data.workerPage===workerPage&&data.jobPage===jobPage)render(data); }
+  const statusQuery = jobStatus ? `&status=${encodeURIComponent(jobStatus)}` : "";
+  const query = `${eventQuery}&workerPage=${workerPage}&workerSize=${workerPageSize}&jobPage=${jobPage}&jobSize=${jobPageSize}${statusQuery}`;
+  try { const data = await api(`/api/dashboard/snapshot?${query}`); if(sessionStorage.getItem(tokenKey)===currentToken&&data.workerPage===workerPage&&data.jobPage===jobPage&&(data.jobStatus||"")===jobStatus)render(data); }
   catch (error) { if (!(error instanceof StaleSessionResponse) && sessionStorage.getItem(tokenKey)===currentToken) { $("#connection").textContent = "API unavailable"; $("#connection").className = "pill warn"; console.error(error); } }
   finally { refreshing = false;if(refreshPending){refreshPending=false;refresh();} }
 }
@@ -191,6 +197,7 @@ $("#auth-form").addEventListener("submit", (event) => { event.preventDefault(); 
 $("#register").addEventListener("click", () => authenticate(true));
 $("#logout").addEventListener("click", () => { sessionStorage.removeItem(tokenKey); resetEventCursor(); setAuthState(); });
 $("#refresh").addEventListener("click", () => { refresh(); refreshEvents(); });
+$("#job-status-filter").addEventListener("change", (event) => { jobStatus=event.currentTarget.value;jobPage=0;refresh(); });
 $("#close-detail").addEventListener("click", () => $("#job-detail").close());
 $("#job-form").elements.scheduleType.addEventListener("change", (event) => {
   $("#runat-field").classList.toggle("hidden", event.target.value !== "ONE_TIME");

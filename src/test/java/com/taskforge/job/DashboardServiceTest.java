@@ -67,4 +67,18 @@ class DashboardServiceTest {
         assertEquals(2,snapshot.jobPage());assertEquals(10,snapshot.jobSize());assertEquals(27,snapshot.totalJobs());assertTrue(snapshot.jobs().isEmpty());
         verify(jobs).findByOwnerId(42L,requested);verifyNoInteractions(workers);
     }
+
+    @Test void snapshotFiltersOwnerJobsWithoutChangingLifecycleTotals(){
+        JobRepository jobs=mock(JobRepository.class);JobEventRepository events=mock(JobEventRepository.class);WorkerRepository workers=mock(WorkerRepository.class);UserRepository users=mock(UserRepository.class);
+        User owner=mock(User.class);when(owner.getId()).thenReturn(42L);when(users.findByEmail("owner@example.com")).thenReturn(Optional.of(owner));
+        var requested=org.springframework.data.domain.PageRequest.of(0,25,org.springframework.data.domain.Sort.by(org.springframework.data.domain.Sort.Direction.DESC,"updatedAt"));
+        when(jobs.findByOwnerIdAndStatus(42L,JobStatus.RETRYING,requested)).thenReturn(new PageImpl<>(List.of(),requested,3));
+        when(jobs.countGroupedByOwnerStatus(42L)).thenReturn(List.of());
+        when(events.findTop200ByCreatedAtGreaterThanEqualOrderByIdAsc(any())).thenReturn(List.of());
+
+        DashboardSnapshot snapshot=new DashboardService(jobs,events,workers,users).snapshot("owner@example.com",false,null,null,0,25,0,25,JobStatus.RETRYING);
+
+        assertEquals(JobStatus.RETRYING,snapshot.jobStatus());assertEquals(3,snapshot.totalJobs());assertEquals(0L,snapshot.counts().get(JobStatus.RETRYING.name()));
+        verify(jobs).findByOwnerIdAndStatus(42L,JobStatus.RETRYING,requested);verify(jobs).countGroupedByOwnerStatus(42L);
+    }
 }

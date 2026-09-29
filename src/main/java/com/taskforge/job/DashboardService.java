@@ -23,15 +23,19 @@ public class DashboardService {
         return snapshot(email,admin,since,afterId,workerPage,workerSize,0,25);
     }
     public DashboardSnapshot snapshot(String email,boolean admin,Instant since,Long afterId,int workerPage,int workerSize,int jobPage,int jobSize){
+        return snapshot(email,admin,since,afterId,workerPage,workerSize,jobPage,jobSize,null);
+    }
+    public DashboardSnapshot snapshot(String email,boolean admin,Instant since,Long afterId,int workerPage,int workerSize,int jobPage,int jobSize,JobStatus jobStatus){
         var user=users.findByEmail(email).orElseThrow();
         var counts=new LinkedHashMap<String,Long>();
         for(JobStatus status:JobStatus.values())counts.put(status.name(),0L);
         var groupedCounts=admin?jobs.countGroupedByStatus():jobs.countGroupedByOwnerStatus(user.getId());
         groupedCounts.forEach(row->counts.put(row.getStatus().name(),row.getTotal()));
-        var jobResults=admin?jobs.findAll(PageRequest.of(jobPage,jobSize,Sort.by(Sort.Direction.DESC,"updatedAt"))):jobs.findByOwnerId(user.getId(),PageRequest.of(jobPage,jobSize,Sort.by(Sort.Direction.DESC,"updatedAt")));
+        var pageable=PageRequest.of(jobPage,jobSize,Sort.by(Sort.Direction.DESC,"updatedAt"));
+        var jobResults=admin?(jobStatus==null?jobs.findAll(pageable):jobs.findByStatus(jobStatus,pageable)):(jobStatus==null?jobs.findByOwnerId(user.getId(),pageable):jobs.findByOwnerIdAndStatus(user.getId(),jobStatus,pageable));
         var workerResults=admin?workers.findAllByOrderByLastHeartbeatDesc(PageRequest.of(workerPage,workerSize)):org.springframework.data.domain.Page.<Worker>empty();
         var workerViews=workerResults.map(WorkerView::of).getContent();
-        return new DashboardSnapshot(Instant.now(),admin,Map.copyOf(counts),jobResults.map(JobView::of).getContent(),workerViews,loadEvents(user.getId(),admin,since,afterId),jobPage,jobSize,jobResults.getTotalElements(),workerPage,workerSize,workerResults.getTotalElements());
+        return new DashboardSnapshot(Instant.now(),admin,Map.copyOf(counts),jobResults.map(JobView::of).getContent(),workerViews,loadEvents(user.getId(),admin,since,afterId),jobStatus,jobPage,jobSize,jobResults.getTotalElements(),workerPage,workerSize,workerResults.getTotalElements());
     }
     private List<EventView> loadEvents(Long ownerId,boolean admin,Instant since,Long afterId){
         var recent=since==null?Instant.now().minusSeconds(3600):since;
