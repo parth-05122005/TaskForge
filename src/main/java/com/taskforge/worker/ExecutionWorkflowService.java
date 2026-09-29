@@ -42,7 +42,7 @@ public class ExecutionWorkflowService {
         boolean success=executionResult==JobStatus.SUCCESS;
         boolean retry=!success&&retryable&&message.attempt()<=job.getMaxRetries()&&!job.isCancellationRequested();
         execution.finish(executionResult,error);
-        if(execution.getDurationMs()!=null)metrics.recordDuration(message.type(),execution.getDurationMs());
+        if(execution.getDurationMs()!=null)metrics.recordDuration(execution.getDurationMs());
         if(job.isCancellationRequested()){
             job.transition(JobStatus.CANCELLED);
         } else if(success){
