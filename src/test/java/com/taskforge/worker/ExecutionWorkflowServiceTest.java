@@ -42,6 +42,18 @@ class ExecutionWorkflowServiceTest {
         assertEquals(JobStatus.FAILED,running.getStatus());verify(outbox).save(argThat(o->o.getTopic().equals("taskforge.jobs.dlq")));
     }
 
+    @Test void nonCooperativeCronTimeoutFailsClosedInsteadOfStartingAnOverlappingOccurrence(){
+        Job cron=new Job(new User("cron-timeout@example.com","hash"),"cron timeout",null,"REPORT","{}",ScheduleType.CRON,"0 */5 * * * *","UTC",Instant.now(),JobPriority.MEDIUM,3,30);
+        cron.beginScheduledRun();cron.transition(JobStatus.QUEUED);cron.transition(JobStatus.RUNNING);
+        JobExecution execution=execution(cron,"lease");
+        when(jobs.findById(11L)).thenReturn(Optional.of(cron));when(jobs.findByIdForUpdate(11L)).thenReturn(Optional.of(cron));when(executions.findByIdForUpdate(22L)).thenReturn(Optional.of(execution));when(workers.findById("worker-1")).thenReturn(Optional.of(new Worker("worker-1","host")));
+
+        assertTrue(service.finish(message(1),"worker-1","lease",JobStatus.TIMEOUT,false,"handler ignored interruption"));
+
+        assertEquals(JobStatus.FAILED,cron.getStatus());
+        verify(outbox).save(argThat(o->o.getTopic().equals("taskforge.jobs.dlq")));
+    }
+
     @Test void staleLeaseCannotOverwriteRecoveredExecution(){
         Job running=job(JobStatus.RUNNING,2);JobExecution execution=execution(running,"new-token");
         when(jobs.findById(11L)).thenReturn(Optional.of(running));when(jobs.findByIdForUpdate(11L)).thenReturn(Optional.of(running));when(executions.findByIdForUpdate(22L)).thenReturn(Optional.of(execution));

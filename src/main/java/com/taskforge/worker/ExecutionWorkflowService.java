@@ -55,8 +55,10 @@ public class ExecutionWorkflowService {
             job.setNextRunAt(Instant.now().plusSeconds(seconds));
         } else if(executionResult==JobStatus.TIMEOUT){
             job.transition(JobStatus.TIMEOUT);
-            if(job.getScheduleType()==ScheduleType.CRON){job.setNextRunAt(job.nextCronRunAfter(Instant.now()));job.transition(JobStatus.SCHEDULED);}
-            else job.transition(JobStatus.FAILED);
+            // A timeout whose handler did not stop (or exhausted its retry
+            // budget) is terminal for this job until an operator triggers it.
+            // Never automatically overlap a later cron firing with old code.
+            job.transition(JobStatus.FAILED);
         } else if(job.getScheduleType()==ScheduleType.CRON){job.setNextRunAt(job.nextCronRunAfter(Instant.now()));job.transition(JobStatus.SCHEDULED);}
         else job.transition(JobStatus.FAILED);
         worker.idle();

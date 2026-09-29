@@ -34,6 +34,7 @@ taskforge:
   jwt-secret: ${TASKFORGE_JWT_SECRET}
   jwt-ttl: PT8H
   role: ${TASKFORGE_ROLE:api}
+  handler-stop-grace-seconds: ${TASKFORGE_HANDLER_STOP_GRACE_SECONDS:5}
   scheduler-interval: ${TASKFORGE_SCHEDULER_INTERVAL:1000}
   outbox-interval: ${TASKFORGE_OUTBOX_INTERVAL:250}
   heartbeat-interval: ${TASKFORGE_HEARTBEAT_INTERVAL:5000}

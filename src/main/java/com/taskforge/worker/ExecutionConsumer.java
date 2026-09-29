@@ -17,9 +17,11 @@ import java.util.concurrent.*;
 @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name="taskforge.role",havingValue="worker")
 public class ExecutionConsumer {
     private static final org.slf4j.Logger log=org.slf4j.LoggerFactory.getLogger(ExecutionConsumer.class);
-    private final StringRedisTemplate redis;private final DemoHandlers handlers;private final WorkerRuntime runtime;private final ExecutionWorkflowService workflow;private final ObjectMapper mapper;
+    private final StringRedisTemplate redis;private final DemoHandlers handlers;private final WorkerRuntime runtime;private final ExecutionWorkflowService workflow;private final ObjectMapper mapper;private final long handlerStopGraceSeconds;
     private final ExecutorService executionPool=Executors.newCachedThreadPool();
-    public ExecutionConsumer(StringRedisTemplate redis,DemoHandlers handlers,WorkerRuntime runtime,ExecutionWorkflowService workflow,ObjectMapper mapper){this.redis=redis;this.handlers=handlers;this.runtime=runtime;this.workflow=workflow;this.mapper=mapper;}
+    public ExecutionConsumer(StringRedisTemplate redis,DemoHandlers handlers,WorkerRuntime runtime,ExecutionWorkflowService workflow,ObjectMapper mapper){this(redis,handlers,runtime,workflow,mapper,5);}
+    @org.springframework.beans.factory.annotation.Autowired
+    public ExecutionConsumer(StringRedisTemplate redis,DemoHandlers handlers,WorkerRuntime runtime,ExecutionWorkflowService workflow,ObjectMapper mapper,@org.springframework.beans.factory.annotation.Value("${taskforge.handler-stop-grace-seconds:5}") long handlerStopGraceSeconds){if(handlerStopGraceSeconds<1||handlerStopGraceSeconds>60)throw new IllegalArgumentException("Handler stop grace must be between 1 and 60 seconds");this.redis=redis;this.handlers=handlers;this.runtime=runtime;this.workflow=workflow;this.mapper=mapper;this.handlerStopGraceSeconds=handlerStopGraceSeconds;}
 
     @KafkaListener(topics="taskforge.jobs.execute",groupId="taskforge-workers")
     public void receive(String payload,Acknowledgment acknowledgment){
@@ -37,8 +39,8 @@ public class ExecutionConsumer {
             String leaseToken=workflow.claim(message,runtime.id());
             if(leaseToken==null){if(workflow.isRunning(message.executionId()))acknowledgment.nack(Duration.ofSeconds(1));else acknowledgment.acknowledge();return;}
             log.atInfo().addKeyValue("jobId",message.jobId()).addKeyValue("executionId",message.executionId()).addKeyValue("workerId",runtime.id()).addKeyValue("attempt",message.attempt()).log("Worker claimed execution");
-            CountDownLatch handlerEnded=new CountDownLatch(1);
-            Future<?> running=executionPool.submit((Callable<Void>)()->{try{handlers.get(message.type()).execute(message);return null;}finally{handlerEnded.countDown();}});
+            CountDownLatch handlerEnded=new CountDownLatch(1);java.util.concurrent.atomic.AtomicBoolean handlerStarted=new java.util.concurrent.atomic.AtomicBoolean();
+            Future<?> running=executionPool.submit((Callable<Void>)()->{handlerStarted.set(true);try{handlers.get(message.type()).execute(message);return null;}finally{handlerEnded.countDown();}});
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(message.timeoutSeconds());
             try {
                 boolean finished=false;
@@ -51,14 +53,16 @@ public class ExecutionConsumer {
                         finished=true;
                     } catch(TimeoutException pending) {
                         if(workflow.isCancellationRequested(message.jobId())) {
-                            running.cancel(true);
-                            handlerEnded.await();
-                            workflow.finish(message,runtime.id(),leaseToken,JobStatus.CANCELLED,false,"Execution stopped after cancellation request");
+                            boolean stopped=interruptAndAwait(running,handlerStarted,handlerEnded);
+                            String detail=stopped?"Execution stopped after cancellation request":"Handler ignored cancellation interruption; execution was marked cancelled and will not be retried automatically";
+                            if(!stopped)log.atError().addKeyValue("jobId",message.jobId()).addKeyValue("executionId",message.executionId()).addKeyValue("workerId",runtime.id()).log("Handler did not stop during cancellation grace period");
+                            workflow.finish(message,runtime.id(),leaseToken,JobStatus.CANCELLED,false,detail);
                             finished=true;
                         } else if(System.nanoTime()>=deadline) {
-                            running.cancel(true);
-                            handlerEnded.await();
-                            workflow.finish(message,runtime.id(),leaseToken,JobStatus.TIMEOUT,true,"Execution exceeded timeout of "+message.timeoutSeconds()+" seconds");
+                            boolean stopped=interruptAndAwait(running,handlerStarted,handlerEnded);
+                            String detail=stopped?"Execution exceeded timeout of "+message.timeoutSeconds()+" seconds":"Handler ignored timeout interruption; execution was marked terminal and will not be retried automatically. Isolate this handler in a process to guarantee termination.";
+                            if(!stopped)log.atError().addKeyValue("jobId",message.jobId()).addKeyValue("executionId",message.executionId()).addKeyValue("workerId",runtime.id()).log("Handler did not stop during timeout grace period; disabling automatic retry for this run");
+                            workflow.finish(message,runtime.id(),leaseToken,JobStatus.TIMEOUT,stopped,detail);
                             finished=true;
                         }
                     } catch(ExecutionException e) {
@@ -80,6 +84,11 @@ public class ExecutionConsumer {
                 redis.execute(new org.springframework.data.redis.core.script.DefaultRedisScript<>(script,Long.class),List.of(key),token);
             } catch(RuntimeException unavailable) {log.warn("Redis lock release failed; its TTL will expire",unavailable);}
         }
+    }
+
+    private boolean interruptAndAwait(Future<?> running,java.util.concurrent.atomic.AtomicBoolean handlerStarted,CountDownLatch handlerEnded)throws InterruptedException{
+        running.cancel(true);
+        return !handlerStarted.get()||handlerEnded.await(handlerStopGraceSeconds,TimeUnit.SECONDS);
     }
 
     @PreDestroy public void shutdown(){executionPool.shutdownNow();}
