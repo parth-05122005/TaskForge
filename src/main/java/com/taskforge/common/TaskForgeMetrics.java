@@ -22,6 +22,7 @@ public class TaskForgeMetrics {
         Gauge.builder("taskforge.jobs.queue.depth",jobs,r->r.countByStatus(JobStatus.QUEUED)).description("Jobs currently queued").register(registry);
         Gauge.builder("taskforge.workers.active",workers,r->r.countByStatus(WorkerStatus.ONLINE)+r.countByStatus(WorkerStatus.BUSY)).description("Workers with recent heartbeats").register(registry);
         Gauge.builder("taskforge.workers.dead",workers,r->r.countByStatus(WorkerStatus.DEAD)).description("Workers marked dead after missed heartbeats").register(registry);
+        Gauge.builder("taskforge.workers.offline",workers,r->r.countByStatus(WorkerStatus.OFFLINE)).description("Workers that shut down cleanly").register(registry);
         Gauge.builder("taskforge.workers.busy",workers,r->r.countByStatus(WorkerStatus.BUSY)).description("Workers currently assigned to a job").register(registry);
         Gauge.builder("taskforge.jobs.retrying",jobs,r->r.countByStatus(JobStatus.RETRYING)).description("Jobs waiting for a retry attempt").register(registry);
         if(outbox!=null){
