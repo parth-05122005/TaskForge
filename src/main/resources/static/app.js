@@ -1,7 +1,9 @@
 const $ = (selector) => document.querySelector(selector);
 const tokenKey = "taskforge.jwt";
-let cursor = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+const initialSince = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+let eventCursor = 0;
 let timer = null;
+let refreshing = false;
 
 function setAuthState() {
   const signedIn = !!sessionStorage.getItem(tokenKey);
@@ -72,13 +74,17 @@ function render(snapshot) {
     eventList.prepend(item);
     while (eventList.childElementCount > 200) eventList.lastElementChild.remove();
   });
-  if (snapshot.events.length) { const newest = snapshot.events.reduce((max, event) => Math.max(max, Date.parse(event.createdAt)), Date.parse(cursor)); cursor = new Date(newest).toISOString(); }
+  if (snapshot.events.length) eventCursor = Math.max(eventCursor, ...snapshot.events.map((event) => event.id));
 }
 
 async function refresh() {
-  if (!sessionStorage.getItem(tokenKey)) return;
-  try { const data = await api(`/api/dashboard/snapshot?since=${encodeURIComponent(cursor)}`); render(data); }
+  const currentToken = sessionStorage.getItem(tokenKey);
+  if (!currentToken || refreshing) return;
+  refreshing = true;
+  const query = eventCursor ? `afterId=${eventCursor}` : `since=${encodeURIComponent(initialSince)}`;
+  try { const data = await api(`/api/dashboard/snapshot?${query}`); if(sessionStorage.getItem(tokenKey)===currentToken)render(data); }
   catch (error) { $("#connection").textContent = "API unavailable"; $("#connection").className = "pill warn"; console.error(error); }
+  finally { refreshing = false; }
 }
 
 async function cancelJob(id) {
@@ -94,7 +100,7 @@ async function showHistory(job) {
 
 $("#auth-form").addEventListener("submit", (event) => { event.preventDefault(); authenticate(false); });
 $("#register").addEventListener("click", () => authenticate(true));
-$("#logout").addEventListener("click", () => { sessionStorage.removeItem(tokenKey); cursor = new Date(Date.now()-3600000).toISOString(); setAuthState(); });
+$("#logout").addEventListener("click", () => { sessionStorage.removeItem(tokenKey); eventCursor = 0; setAuthState(); });
 $("#refresh").addEventListener("click", refresh);
 $("#close-detail").addEventListener("click", () => $("#job-detail").close());
 $("#job-form").elements.scheduleType.addEventListener("change", (event) => {

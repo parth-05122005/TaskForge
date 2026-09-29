@@ -156,7 +156,7 @@ Main routes:
 - Auth: `POST /api/auth/register`, `POST /api/auth/login`
 - Jobs: `POST/GET /api/jobs`, `GET/PUT/DELETE /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/trigger`, `GET /api/jobs/{id}/executions`
 - Workers (admin only): `GET /api/workers`, `GET /api/workers/{id}`
-- Dashboard snapshot: `GET /api/dashboard/snapshot?since=<ISO-8601 timestamp>`
+- Dashboard snapshot: initial `GET /api/dashboard/snapshot?since=<ISO-8601 timestamp>`, then incremental `GET /api/dashboard/snapshot?afterId=<last-event-id>`
 - Admin: `GET /api/admin/statistics`, `GET /api/admin/jobs`, `GET /api/admin/workers`, `POST /api/admin/users/{id}/disable`
 - Observability: `/actuator/health`, `/actuator/info`, `/actuator/metrics`, `/actuator/prometheus`
 

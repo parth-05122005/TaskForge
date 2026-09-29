@@ -8,5 +8,5 @@ import java.time.Instant;
 public class DashboardController {
     private final DashboardService dashboard;
     public DashboardController(DashboardService dashboard){this.dashboard=dashboard;}
-    @GetMapping("/snapshot") public DashboardSnapshot snapshot(Authentication auth,@RequestParam(required=false) Instant since){boolean admin=auth.getAuthorities().stream().anyMatch(a->a.getAuthority().equals("ROLE_ADMIN"));return dashboard.snapshot(auth.getName(),admin,since);}
+    @GetMapping("/snapshot") public DashboardSnapshot snapshot(Authentication auth,@RequestParam(required=false) Instant since,@RequestParam(required=false) Long afterId){if(afterId!=null&&afterId<0)throw new IllegalArgumentException("afterId must be nonnegative");boolean admin=auth.getAuthorities().stream().anyMatch(a->a.getAuthority().equals("ROLE_ADMIN"));return dashboard.snapshot(auth.getName(),admin,since,afterId);}
 }
