@@ -172,7 +172,7 @@ Redis locks have TTLs and compare-token release, but are best-effort coordinatio
 
 Workers process one Kafka record per poll and configure the maximum poll interval above the supported job timeout, avoiding normal long jobs being mistaken for stalled consumers. A worker process crash is still detected by Kafka heartbeats and the independent PostgreSQL execution lease.
 
-Retries use a configurable exponential delay, set with `TASKFORGE_RETRY_BASE_DELAY` (default 2 seconds) and `TASKFORGE_RETRY_MAX_DELAY` (default 256 seconds). `maxRetries=3` means one initial attempt plus up to three retries. Validation/unsupported-type `IllegalArgumentException`s are treated as permanent; other handler exceptions are treated as transient. Exhausted attempts, including crashed attempts recovered after a worker lease expires, emit to the DLQ topic unless the job was cancelled.
+Retries use full jitter over an exponential delay, set with `TASKFORGE_RETRY_BASE_DELAY` (default 2 seconds) and `TASKFORGE_RETRY_MAX_DELAY` (default 256 seconds). Jitter spreads retries across workers and relay instances to avoid synchronized retry bursts. `maxRetries=3` means one initial attempt plus up to three retries. Validation/unsupported-type `IllegalArgumentException`s are treated as permanent; other handler exceptions are treated as transient. Exhausted attempts, including crashed attempts recovered after a worker lease expires, emit to the DLQ topic unless the job was cancelled.
 
 ## Testing
 
