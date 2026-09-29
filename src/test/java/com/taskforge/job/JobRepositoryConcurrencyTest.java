@@ -172,9 +172,13 @@ class JobRepositoryConcurrencyTest {
         tx.execute(s->{assertEquals(1,executions.claimQueued(executionId,jobId,1,worker.getId(),"expired-lease",-60));return null;});
         var mapper=new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();
         JobEventService eventService=new JobEventService(events,outbox,mapper);
-        var recovery=new com.taskforge.worker.LeaseRecovery(executions,jobs,workers,eventService,Mockito.mock(StringRedisTemplate.class),outbox,mapper,new TaskForgeMetrics(new SimpleMeterRegistry(),jobs,workers));
+        var recovery=new com.taskforge.worker.LeaseRecovery(executions,jobs,workers,eventService,Mockito.mock(StringRedisTemplate.class),outbox,mapper,new TaskForgeMetrics(new SimpleMeterRegistry(),jobs,workers),7,7);
+        Instant recoveryStarted=Instant.now();
         tx.execute(s->{recovery.recoverExpiredLeases();return null;});
-        assertEquals(JobStatus.RETRYING,jobs.findById(jobId).orElseThrow().getStatus());
+        Job recovered=jobs.findById(jobId).orElseThrow();
+        assertEquals(JobStatus.RETRYING,recovered.getStatus());
+        long retryDelayMillis=java.time.Duration.between(recoveryStarted,recovered.getNextRunAt()).toMillis();
+        assertTrue(retryDelayMillis>=6_000&&retryDelayMillis<=7_000,"Lease recovery should honor the configured seven-second retry delay");
         assertEquals(JobStatus.FAILED,executions.findById(executionId).orElseThrow().getStatus());
         assertEquals(WorkerStatus.ONLINE,workers.findById(worker.getId()).orElseThrow().getStatus());
         assertEquals(1,outbox.count()); // recovered lifecycle event; retryable crash is not dead-lettered

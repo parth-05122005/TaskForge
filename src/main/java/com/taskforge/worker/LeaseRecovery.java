@@ -12,8 +12,10 @@ import java.time.Instant;
 @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name="taskforge.role",havingValue="api",matchIfMissing=true)
 public class LeaseRecovery {
     private static final org.slf4j.Logger log=org.slf4j.LoggerFactory.getLogger(LeaseRecovery.class);
-    private final JobExecutionRepository executions;private final JobRepository jobs;private final WorkerRepository workers;private final JobEventService events;private final org.springframework.data.redis.core.StringRedisTemplate redis;private final OutboxRepository outbox;private final ObjectMapper mapper;private final com.taskforge.common.TaskForgeMetrics metrics;
-    public LeaseRecovery(JobExecutionRepository executions,JobRepository jobs,WorkerRepository workers,JobEventService events,org.springframework.data.redis.core.StringRedisTemplate redis,OutboxRepository outbox,ObjectMapper mapper,com.taskforge.common.TaskForgeMetrics metrics){this.executions=executions;this.jobs=jobs;this.workers=workers;this.events=events;this.redis=redis;this.outbox=outbox;this.mapper=mapper;this.metrics=metrics;}
+    private final JobExecutionRepository executions;private final JobRepository jobs;private final WorkerRepository workers;private final JobEventService events;private final org.springframework.data.redis.core.StringRedisTemplate redis;private final OutboxRepository outbox;private final ObjectMapper mapper;private final com.taskforge.common.TaskForgeMetrics metrics;private final long retryBaseSeconds;private final long retryMaxSeconds;
+    public LeaseRecovery(JobExecutionRepository executions,JobRepository jobs,WorkerRepository workers,JobEventService events,org.springframework.data.redis.core.StringRedisTemplate redis,OutboxRepository outbox,ObjectMapper mapper,com.taskforge.common.TaskForgeMetrics metrics){this(executions,jobs,workers,events,redis,outbox,mapper,metrics,2,256);}
+    @org.springframework.beans.factory.annotation.Autowired
+    public LeaseRecovery(JobExecutionRepository executions,JobRepository jobs,WorkerRepository workers,JobEventService events,org.springframework.data.redis.core.StringRedisTemplate redis,OutboxRepository outbox,ObjectMapper mapper,com.taskforge.common.TaskForgeMetrics metrics,@org.springframework.beans.factory.annotation.Value("${taskforge.retry.base-delay:2}") long retryBaseSeconds,@org.springframework.beans.factory.annotation.Value("${taskforge.retry.max-delay:256}") long retryMaxSeconds){if(retryBaseSeconds<1||retryMaxSeconds<retryBaseSeconds)throw new IllegalArgumentException("Retry delay settings must satisfy 1 <= base <= max");this.executions=executions;this.jobs=jobs;this.workers=workers;this.events=events;this.redis=redis;this.outbox=outbox;this.mapper=mapper;this.metrics=metrics;this.retryBaseSeconds=retryBaseSeconds;this.retryMaxSeconds=retryMaxSeconds;}
 
     @Scheduled(fixedDelayString="${taskforge.recovery-interval:5000}")
     @Transactional
@@ -28,7 +30,8 @@ public class LeaseRecovery {
             if(job.isCancellationRequested()) {
                 job.transition(JobStatus.CANCELLED);
             } else if(retry) {
-                job.transition(JobStatus.RETRYING);job.setNextRunAt(Instant.now().plusSeconds(2));metrics.retried();
+                long retryDelay=com.taskforge.common.RetryBackoff.seconds(execution.getAttemptNumber(),retryBaseSeconds,retryMaxSeconds);
+                job.transition(JobStatus.RETRYING);job.setNextRunAt(Instant.now().plusSeconds(retryDelay));metrics.retried();
             } else if(job.getScheduleType()==ScheduleType.CRON) {
                 job.setNextRunAt(job.nextCronRunAfter(Instant.now()));job.transition(JobStatus.SCHEDULED);
             } else {
