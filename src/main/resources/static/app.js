@@ -3,15 +3,21 @@ const tokenKey = "taskforge.jwt";
 let initialSince = new Date(Date.now() - 60 * 60 * 1000).toISOString();
 let eventCursor = 0;
 let timer = null;
+let eventTimer = null;
 let refreshing = false;
+let refreshingEvents = false;
+let refreshPending = false;
+let historyJob = null;
+let workerPage = 0;
+const workerPageSize = 25;
 
 function setAuthState() {
   const signedIn = !!sessionStorage.getItem(tokenKey);
   $("#auth").classList.toggle("hidden", signedIn);
   $("#app").classList.toggle("hidden", !signedIn);
   $("#logout").classList.toggle("hidden", !signedIn);
-  if (signedIn) { refresh(); timer ||= setInterval(refresh, 1500); }
-  else { clearInterval(timer); timer = null; $("#connection").textContent = "Signed out"; }
+  if (signedIn) { refresh(); refreshEvents(); timer ||= setInterval(refresh, 5000); eventTimer ||= setInterval(refreshEvents, 1500); }
+  else { clearInterval(timer); clearInterval(eventTimer); timer = null; eventTimer = null; $("#connection").textContent = "Signed out"; }
 }
 
 async function api(path, options = {}) {
@@ -60,13 +66,25 @@ function render(snapshot) {
     row.append(action); tbody.append(row);
   });
   const workerList = $("#workers"); workerList.replaceChildren();
+  workerPage = snapshot.workerPage;
+  $("#worker-count").textContent = `${snapshot.totalWorkers} total · showing ${snapshot.workers.length}`;
   if (!snapshot.workers.length) workerList.append(node("p", "No workers have registered yet.", "empty"));
   snapshot.workers.forEach((worker) => {
     const card = node("div", null, "worker"); card.append(node("strong", worker.hostname), node("span", worker.status, `status ${worker.status}`));
     card.append(node("small", worker.currentJobId ? `working on job #${worker.currentJobId}` : `last heartbeat ${new Date(worker.lastHeartbeat).toLocaleTimeString()}`)); workerList.append(card);
   });
+  const workerPagination=$("#worker-pagination");workerPagination.replaceChildren();
+  if(snapshot.totalWorkers>snapshot.workerSize){
+    const previous=node("button","Previous","button secondary small");previous.disabled=snapshot.workerPage===0;previous.onclick=()=>{workerPage=snapshot.workerPage-1;refresh();};
+    const next=node("button","Next","button secondary small");next.disabled=(snapshot.workerPage+1)*snapshot.workerSize>=snapshot.totalWorkers;next.onclick=()=>{workerPage=snapshot.workerPage+1;refresh();};
+    workerPagination.append(previous,node("span",`Page ${snapshot.workerPage+1} of ${Math.ceil(snapshot.totalWorkers/snapshot.workerSize)}`),next);
+  }
+  renderEvents(snapshot.events);
+}
+
+function renderEvents(events) {
   const eventList = $("#events");
-  snapshot.events.forEach((event) => {
+  events.forEach((event) => {
     if (eventList.querySelector(`[data-event="${event.id}"]`)) return;
     const item = node("li"); item.dataset.event = event.id;
     item.append(node("time", `${new Date(event.createdAt).toLocaleTimeString()} · JOB #${event.jobId} · ${event.status}`));
@@ -74,19 +92,31 @@ function render(snapshot) {
     eventList.prepend(item);
     while (eventList.childElementCount > 200) eventList.lastElementChild.remove();
   });
-  if (snapshot.events.length) eventCursor = Math.max(eventCursor, ...snapshot.events.map((event) => event.id));
+  if (events.length) eventCursor = Math.max(eventCursor, ...events.map((event) => event.id));
 }
 
-function resetEventCursor() { eventCursor = 0; initialSince = new Date(Date.now() - 60 * 60 * 1000).toISOString(); }
+function resetEventCursor() { eventCursor = 0; workerPage = 0; initialSince = new Date(Date.now() - 60 * 60 * 1000).toISOString(); }
 
 async function refresh() {
   const currentToken = sessionStorage.getItem(tokenKey);
-  if (!currentToken || refreshing) return;
+  if (!currentToken) return;
+  if (refreshing) { refreshPending=true; return; }
   refreshing = true;
-  const query = eventCursor ? `afterId=${eventCursor}` : `since=${encodeURIComponent(initialSince)}`;
-  try { const data = await api(`/api/dashboard/snapshot?${query}`); if(sessionStorage.getItem(tokenKey)===currentToken)render(data); }
+  const eventQuery = eventCursor ? `afterId=${eventCursor}` : `since=${encodeURIComponent(initialSince)}`;
+  const query = `${eventQuery}&workerPage=${workerPage}&workerSize=${workerPageSize}`;
+  try { const data = await api(`/api/dashboard/snapshot?${query}`); if(sessionStorage.getItem(tokenKey)===currentToken&&data.workerPage===workerPage)render(data); }
   catch (error) { $("#connection").textContent = "API unavailable"; $("#connection").className = "pill warn"; console.error(error); }
-  finally { refreshing = false; }
+  finally { refreshing = false;if(refreshPending){refreshPending=false;refresh();} }
+}
+
+async function refreshEvents() {
+  const currentToken = sessionStorage.getItem(tokenKey);
+  if (!currentToken || refreshingEvents) return;
+  refreshingEvents = true;
+  const query = eventCursor ? `afterId=${eventCursor}` : `since=${encodeURIComponent(initialSince)}`;
+  try { const events = await api(`/api/dashboard/events?${query}`); if(sessionStorage.getItem(tokenKey)===currentToken)renderEvents(events); }
+  catch (error) { console.error(error); }
+  finally { refreshingEvents = false; }
 }
 
 async function cancelJob(id) {
@@ -94,16 +124,26 @@ async function cancelJob(id) {
   catch (error) { alert(error.message); }
 }
 
-async function showHistory(job) {
+async function showHistory(job, page = 0) {
+  historyJob = job;
   $("#detail-title").textContent = `${job.name} · #${job.id}`; const list=$("#execution-list");list.replaceChildren();
-  try { const history=await api(`/api/jobs/${job.id}/executions`); if(!history.length)list.append(node("p","No attempts yet.","empty")); history.forEach((attempt)=>{const card=node("article",null,"execution");card.append(node("strong",`Run ${attempt.runNumber} · Attempt ${attempt.attemptNumber} · ${attempt.status}`));card.append(node("p",`Worker: ${attempt.workerId||"—"} · Started: ${attempt.startedAt?new Date(attempt.startedAt).toLocaleString():"not started"} · Duration: ${attempt.durationMs??"—"} ms`));if(attempt.errorMessage)card.append(node("pre",attempt.errorMessage));list.append(card);}); $("#job-detail").showModal(); }
+  const pagination=$("#history-pagination");pagination.replaceChildren();
+  try {
+    const history=await api(`/api/jobs/${job.id}/executions?page=${page}&size=20`);
+    if(!history.content.length)list.append(node("p","No attempts yet.","empty"));
+    history.content.forEach((attempt)=>{const card=node("article",null,"execution");card.append(node("strong",`Run ${attempt.runNumber} · Attempt ${attempt.attemptNumber} · ${attempt.status}`));card.append(node("p",`Worker: ${attempt.workerId||"—"} · Started: ${attempt.startedAt?new Date(attempt.startedAt).toLocaleString():"not started"} · Duration: ${attempt.durationMs??"—"} ms`));if(attempt.errorMessage)card.append(node("pre",attempt.errorMessage));list.append(card);});
+    const previous=node("button","Previous","button secondary small");previous.disabled=history.first;previous.onclick=()=>showHistory(historyJob,page-1);
+    const next=node("button","Next","button secondary small");next.disabled=history.last;next.onclick=()=>showHistory(historyJob,page+1);
+    pagination.append(previous,node("span",`Page ${history.number+1} of ${Math.max(history.totalPages,1)}`),next);
+    $("#job-detail").showModal();
+  }
   catch(error){list.append(node("p",error.message,"error"));$("#job-detail").showModal();}
 }
 
 $("#auth-form").addEventListener("submit", (event) => { event.preventDefault(); authenticate(false); });
 $("#register").addEventListener("click", () => authenticate(true));
 $("#logout").addEventListener("click", () => { sessionStorage.removeItem(tokenKey); resetEventCursor(); setAuthState(); });
-$("#refresh").addEventListener("click", refresh);
+$("#refresh").addEventListener("click", () => { refresh(); refreshEvents(); });
 $("#close-detail").addEventListener("click", () => $("#job-detail").close());
 $("#job-form").elements.scheduleType.addEventListener("change", (event) => {
   $("#runat-field").classList.toggle("hidden", event.target.value !== "ONE_TIME");

@@ -28,9 +28,14 @@ server.error.include-message: never
 logging.pattern.level: "%5p [requestId:%X{requestId:-}]"
 management:
   endpoints.web.exposure.include: health,info,metrics,prometheus
-  endpoint.health.show-details: never
+  endpoint.health:
+    show-details: never
+    probes.enabled: true
+    group.readiness.include: readinessState,db
 springdoc.swagger-ui.path: /swagger-ui.html
 taskforge:
+  cors:
+    allowed-origins: ${TASKFORGE_CORS_ALLOWED_ORIGINS:}
   jwt-secret: ${TASKFORGE_JWT_SECRET}
   jwt-ttl: PT8H
   role: ${TASKFORGE_ROLE:api}

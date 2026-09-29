@@ -6,6 +6,11 @@ import java.util.List;
 import java.time.Instant;
 
 public interface OutboxRepository extends JpaRepository<OutboxMessage, Long> {
+    long countByPublishedAtIsNull();
+
+    @Query("select min(message.createdAt) from OutboxMessage message where message.publishedAt is null")
+    Instant findOldestPendingCreatedAt();
+
     @Query(value="select * from outbox_messages where published_at is null and (next_attempt_at is null or next_attempt_at<=now()) order by created_at asc limit :batchSize for update skip locked",nativeQuery=true)
     List<OutboxMessage> lockPending(@Param("batchSize") int batchSize);
 

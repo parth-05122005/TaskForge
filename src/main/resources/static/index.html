@@ -13,11 +13,11 @@
       <form id="auth-form" class="stack"><label>Email<input name="email" type="email" autocomplete="username" required></label><label>Password<input name="password" type="password" minlength="10" autocomplete="current-password" required></label><div class="row"><button class="button" type="submit">Sign in</button><button id="register" class="button secondary" type="button">Create account</button></div><p id="auth-error" class="error"></p></form>
     </section>
     <section id="app" class="hidden">
-      <div class="page-heading"><div><p class="eyebrow">OPERATIONS / LIVE</p><h1>Job control room</h1><p class="muted">Refreshes from persisted API state every 1.5 seconds.</p></div><button id="refresh" class="button secondary">Refresh now</button></div>
+      <div class="page-heading"><div><p class="eyebrow">OPERATIONS / LIVE</p><h1>Job control room</h1><p class="muted">Lifecycle events refresh every 1.5 seconds; jobs and workers refresh every 5 seconds.</p></div><button id="refresh" class="button secondary">Refresh now</button></div>
       <div id="metrics" class="metrics"></div>
       <div class="columns">
         <section class="panel"><div class="section-head"><div><p class="eyebrow">QUEUE</p><h2>Recent jobs</h2></div><span id="job-count" class="muted"></span></div><div class="table-wrap"><table><thead><tr><th>Job</th><th>Type</th><th>Status</th><th>Worker</th><th>Attempts</th><th></th></tr></thead><tbody id="jobs"></tbody></table></div></section>
-        <section id="worker-panel" class="panel"><div class="section-head"><div><p class="eyebrow">CAPACITY</p><h2>Workers</h2></div></div><div id="workers" class="worker-list"></div></section>
+        <section id="worker-panel" class="panel"><div class="section-head"><div><p class="eyebrow">CAPACITY</p><h2>Workers</h2><span id="worker-count" class="muted"></span></div></div><div id="workers" class="worker-list"></div><div id="worker-pagination" class="section-head"></div></section>
       </div>
       <div class="columns lower">
         <section class="panel"><div class="section-head"><div><p class="eyebrow">AUDIT TRAIL</p><h2>Live lifecycle events</h2></div></div><ol id="events" class="timeline"></ol></section>
@@ -25,7 +25,7 @@
           <form id="job-form" class="form-grid"><label>Name<input name="name" value="Demo report" required></label><label>Job type<select name="type"><option>REPORT_GENERATION</option><option>EMAIL_NOTIFICATION</option><option>DATA_PROCESSING</option><option>DEMO_LONG_RUNNING_TASK</option><option>DEMO_FAIL</option></select></label><label>Priority<select name="priority"><option>MEDIUM</option><option>LOW</option><option>HIGH</option><option>CRITICAL</option></select></label><label>Schedule<select name="scheduleType"><option>IMMEDIATE</option><option>ONE_TIME</option><option>CRON</option></select></label><label id="runat-field" class="hidden">Run at<input name="runAt" type="datetime-local"></label><label id="cron-field" class="hidden">Cron (5 or 6 fields)<input name="cronExpression" value="0 */5 * * * *"></label><label id="zone-field" class="hidden">Time zone<input name="timeZone" value="UTC"></label><label class="wide">Payload JSON<textarea name="payload">{"demo":true}</textarea></label><div class="row wide"><button class="button" type="submit">Create job</button><span id="job-error" class="error"></span></div></form>
         </section>
       </div>
-      <dialog id="job-detail" class="detail-dialog"><div class="section-head"><div><p class="eyebrow">EXECUTION HISTORY</p><h2 id="detail-title">Job</h2></div><button id="close-detail" class="button ghost">Close</button></div><div id="execution-list"></div></dialog>
+      <dialog id="job-detail" class="detail-dialog"><div class="section-head"><div><p class="eyebrow">EXECUTION HISTORY</p><h2 id="detail-title">Job</h2></div><button id="close-detail" class="button ghost">Close</button></div><div id="execution-list"></div><div id="history-pagination" class="section-head"></div></dialog>
       <p class="footnote">Worker assignment and event history are stored by TaskForge. This view polls the API; it is near-live, not a WebSocket stream.</p>
     </section>
   </main>

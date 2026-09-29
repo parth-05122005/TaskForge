@@ -44,6 +44,22 @@ class JobRepositoryConcurrencyTest {
         assertTrue(outbox.existsById(pending.getId()));
     }
 
+    @Test void pendingOutboxMetricsIgnorePublishedMessagesAndClearWhenDrained(){
+        OutboxMessage pending=new OutboxMessage("topic","pending","{}");
+        outbox.saveAndFlush(pending);
+        OutboxMessage published=new OutboxMessage("topic","published","{}");
+        published.markPublished();
+        outbox.saveAndFlush(published);
+
+        assertEquals(1,outbox.countByPublishedAtIsNull());
+        assertNotNull(outbox.findOldestPendingCreatedAt());
+
+        pending.markPublished();
+        outbox.saveAndFlush(pending);
+        assertEquals(0,outbox.countByPublishedAtIsNull());
+        assertNull(outbox.findOldestPendingCreatedAt());
+    }
+
     @Test void deleteLockQueryLocksExecutionHistoryInStableOrder(){
         User owner=users.save(new User("delete-lock-order@example.com","hash"));
         Job job=jobs.save(new Job(owner,"delete lock order",null,"REPORT","{}",ScheduleType.IMMEDIATE,null,Instant.now(),JobPriority.MEDIUM,1,30));
@@ -85,7 +101,7 @@ class JobRepositoryConcurrencyTest {
             start.countDown();
             first.get(10,TimeUnit.SECONDS);second.get(10,TimeUnit.SECONDS);
             assertEquals(JobStatus.QUEUED,jobs.findById(job.getId()).orElseThrow().getStatus());
-            assertEquals(1,executions.findByJobIdOrderByRunNumberDescAttemptNumberDesc(job.getId()).size());
+            assertEquals(1,executions.findByJobIdOrderByRunNumberDescAttemptNumberDesc(job.getId(),org.springframework.data.domain.PageRequest.of(0,10)).getTotalElements());
             assertEquals(2,outbox.count()); // execute message plus persisted QUEUED lifecycle event
         } finally {pool.shutdownNow();}
     }
@@ -239,7 +255,7 @@ class JobRepositoryConcurrencyTest {
         var mapper=new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();Scheduler scheduler=new Scheduler(jobs,executions,outbox,new JobEventService(events,outbox,mapper),mapper);
         new TransactionTemplate(transactionManager).execute(status->{scheduler.dispatchDue();return null;});
         assertEquals(JobStatus.QUEUED,jobs.findById(job.getId()).orElseThrow().getStatus());
-        assertEquals(1,executions.findByJobIdOrderByRunNumberDescAttemptNumberDesc(job.getId()).size());
+        assertEquals(1,executions.findByJobIdOrderByRunNumberDescAttemptNumberDesc(job.getId(),org.springframework.data.domain.PageRequest.of(0,10)).getTotalElements());
         assertEquals(2,outbox.count());
         assertFalse(events.findTop200ByJobIdOrderByCreatedAtDesc(job.getId()).isEmpty());
     }

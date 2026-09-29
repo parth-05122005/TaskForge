@@ -11,6 +11,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -32,8 +34,11 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest
+@AutoConfigureMockMvc
 @Testcontainers(disabledWithoutDocker=true)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class PlatformContainerIntegrationTest {
@@ -43,6 +48,12 @@ class PlatformContainerIntegrationTest {
     @Container static final KafkaContainer kafka=new KafkaContainer(DockerImageName.parse("apache/kafka-native:3.8.0"));
 
     @DynamicPropertySource static void infrastructure(DynamicPropertyRegistry properties){
+        // Spring may resolve dynamic properties while preparing the test instance,
+        // before the Testcontainers JUnit extension reaches its beforeAll callback.
+        // Start them here so mapped ports are available during ApplicationContext startup.
+        postgres.start();
+        redis.start();
+        kafka.start();
         properties.add("spring.datasource.url",postgres::getJdbcUrl);
         properties.add("spring.datasource.username",postgres::getUsername);
         properties.add("spring.datasource.password",postgres::getPassword);
@@ -63,11 +74,13 @@ class PlatformContainerIntegrationTest {
     @Autowired ObjectMapper mapper;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired ConfigurableApplicationContext applicationContext;
+    @Autowired MockMvc mockMvc;
 
     @BeforeEach void rememberContextForOrderedShutdown(){contextToClose=applicationContext;}
     @AfterAll static void closeApplicationContextBeforeContainersStop(){if(contextToClose!=null)contextToClose.close();}
 
     @Test void outboxDeliveryWorkerExecutionAndDuplicateKafkaDeliveryAreDurable() throws Exception {
+        mockMvc.perform(get("/actuator/health/readiness")).andExpect(status().isOk());
         assertTrue(workers.count()>0,"worker runtime should register itself at startup");
         User owner=users.save(new User("platform-integration@example.com","test-hash"));
         Job job=jobs.save(new Job(owner,"container e2e",null,"REPORT","{\"reportType\":\"TEST\"}",ScheduleType.IMMEDIATE,null,Instant.now(),JobPriority.HIGH,2,30));
@@ -78,7 +91,7 @@ class PlatformContainerIntegrationTest {
 
         transaction.execute(status->{new OutboxPublisher(outbox,kafkaTemplate,2,32).publishPending();return null;});
         awaitStatus(job.getId(),JobStatus.SUCCESS);
-        JobExecution firstAttempt=executions.findByJobIdOrderByRunNumberDescAttemptNumberDesc(job.getId()).get(0);
+        JobExecution firstAttempt=executions.findByJobIdOrderByRunNumberDescAttemptNumberDesc(job.getId(),org.springframework.data.domain.PageRequest.of(0,10)).getContent().get(0);
         assertEquals(1,firstAttempt.getRunNumber());
         assertEquals(1,firstAttempt.getAttemptNumber());
 
@@ -87,7 +100,7 @@ class PlatformContainerIntegrationTest {
         awaitKafkaConsumed(duplicateResult.getRecordMetadata().partition(),duplicateResult.getRecordMetadata().offset());
 
         assertEquals(JobStatus.SUCCESS,jobs.findById(job.getId()).orElseThrow().getStatus());
-        assertEquals(1,executions.findByJobIdOrderByRunNumberDescAttemptNumberDesc(job.getId()).size());
+        assertEquals(1,executions.findByJobIdOrderByRunNumberDescAttemptNumberDesc(job.getId(),org.springframework.data.domain.PageRequest.of(0,10)).getTotalElements());
     }
 
     private void awaitStatus(Long jobId,JobStatus expected)throws InterruptedException {

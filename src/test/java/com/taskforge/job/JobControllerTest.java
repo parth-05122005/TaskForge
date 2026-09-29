@@ -40,4 +40,20 @@ class JobControllerTest {
         assertThrows(IllegalArgumentException.class,()->controller.list(user,0,20,"owner.passwordHash,asc",null));
         verifyNoInteractions(service);
     }
+
+    @Test void listRejectsUnsupportedSortDirectionAndExtraFields() {
+        var user=UsernamePasswordAuthenticationToken.authenticated("owner@example.com",null,List.of(new SimpleGrantedAuthority("ROLE_USER")));
+
+        assertThrows(IllegalArgumentException.class,()->controller.list(user,0,20,"updatedAt,sideways",null));
+        assertThrows(IllegalArgumentException.class,()->controller.list(user,0,20,"updatedAt,desc,name",null));
+        verifyNoInteractions(service);
+    }
+
+    @Test void executionHistoryRejectsInvalidPageBounds() {
+        var user=UsernamePasswordAuthenticationToken.authenticated("owner@example.com",null,List.of(new SimpleGrantedAuthority("ROLE_USER")));
+
+        assertThrows(IllegalArgumentException.class,()->controller.history(7L,user,-1,20));
+        assertThrows(IllegalArgumentException.class,()->controller.history(7L,user,0,101));
+        verifyNoInteractions(service);
+    }
 }
