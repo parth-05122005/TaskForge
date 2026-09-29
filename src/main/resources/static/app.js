@@ -114,8 +114,21 @@ async function refreshEvents() {
   if (!currentToken || refreshingEvents) return;
   refreshingEvents = true;
   const query = eventCursor ? `afterId=${eventCursor}` : `since=${encodeURIComponent(initialSince)}`;
-  try { const events = await api(`/api/dashboard/events?${query}`); if(sessionStorage.getItem(tokenKey)===currentToken)renderEvents(events); }
-  catch (error) { console.error(error); }
+  try {
+    const events = await api(`/api/dashboard/events?${query}`);
+    if(sessionStorage.getItem(tokenKey)===currentToken) {
+      renderEvents(events);
+      $("#event-connection").textContent = `EVENTS · ${new Date().toLocaleTimeString()}`;
+      $("#event-connection").className = "pill good";
+    }
+  }
+  catch (error) {
+    if(sessionStorage.getItem(tokenKey)===currentToken) {
+      $("#event-connection").textContent = "EVENT FEED UNAVAILABLE";
+      $("#event-connection").className = "pill warn";
+    }
+    console.error(error);
+  }
   finally { refreshingEvents = false; }
 }
 
