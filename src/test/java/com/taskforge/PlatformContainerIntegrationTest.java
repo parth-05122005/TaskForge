@@ -6,6 +6,8 @@ import com.taskforge.auth.UserRepository;
 import com.taskforge.job.*;
 import com.taskforge.worker.Worker;
 import com.taskforge.worker.WorkerRepository;
+import com.taskforge.worker.WorkerRuntime;
+import com.taskforge.worker.WorkerStatus;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,6 +18,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -70,6 +73,8 @@ class PlatformContainerIntegrationTest {
     @Autowired JobEventRepository events;
     @Autowired UserRepository users;
     @Autowired WorkerRepository workers;
+    @Autowired WorkerRuntime workerRuntime;
+    @Autowired StringRedisTemplate redisTemplate;
     @Autowired KafkaTemplate<String,String> kafkaTemplate;
     @Autowired ObjectMapper mapper;
     @Autowired PlatformTransactionManager transactionManager;
@@ -101,6 +106,17 @@ class PlatformContainerIntegrationTest {
 
         assertEquals(JobStatus.SUCCESS,jobs.findById(job.getId()).orElseThrow().getStatus());
         assertEquals(1,executions.findByJobIdOrderByRunNumberDescAttemptNumberDesc(job.getId(),org.springframework.data.domain.PageRequest.of(0,10)).getTotalElements());
+    }
+
+    @Test void gracefulWorkerShutdownPersistsOfflineStatusAndRemovesRedisHeartbeat() {
+        String workerId=workerRuntime.id();
+        String heartbeatKey="taskforge:worker:"+workerId+":heartbeat";
+        redisTemplate.opsForValue().set(heartbeatKey,Instant.now().toString());
+
+        workerRuntime.shutdown();
+
+        assertEquals(WorkerStatus.OFFLINE,workers.findById(workerId).orElseThrow().getStatus());
+        assertFalse(Boolean.TRUE.equals(redisTemplate.hasKey(heartbeatKey)));
     }
 
     private void awaitStatus(Long jobId,JobStatus expected)throws InterruptedException {
