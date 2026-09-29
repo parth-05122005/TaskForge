@@ -131,7 +131,7 @@ For a local Maven check, use `mvn test package`. Testcontainers integration test
 | `TASKFORGE_KAFKA_TOPIC_REPLICATION_FACTOR` | Replication factor for those topics; default 1 for the local single-broker stack |
 | `TASKFORGE_KAFKA_MAX_POLL_INTERVAL_MS` | Worker consumer poll deadline; default exceeds the maximum 24-hour job timeout |
 
-The `.env` file is ignored by Git. No deployment credentials should be committed.
+The `.env` file is ignored by Git. No deployment credentials should be committed. `/actuator/prometheus` exposes aggregate operational metrics without a user token so Prometheus can scrape it; restrict that endpoint to trusted monitoring networks in deployed environments. Other metrics endpoints remain authenticated.
 
 ## API quick start
 

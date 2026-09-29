@@ -120,6 +120,11 @@ class PlatformContainerIntegrationTest {
         assertFalse(Boolean.TRUE.equals(redisTemplate.hasKey(heartbeatKey)));
     }
 
+    @Test void prometheusCanScrapeMetricsWithoutOpeningGeneralMetricsEndpoint() throws Exception {
+        mockMvc.perform(get("/actuator/prometheus")).andExpect(status().isOk());
+        mockMvc.perform(get("/actuator/metrics")).andExpect(status().isUnauthorized());
+    }
+
     private void awaitStatus(Long jobId,JobStatus expected)throws InterruptedException {
         long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(20);
         while(System.nanoTime()<deadline){
