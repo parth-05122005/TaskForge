@@ -33,7 +33,7 @@ PostgreSQL tables are created by Flyway:
 - `workers`: worker identity, heartbeat, state, and current job.
 - `outbox_messages`: Kafka records that must be published after their surrounding database transaction commits.
 - `job_events`: persisted lifecycle history used by the dashboard and event topic.
-- `admin_audit_log`: actor, target, and timestamp for administrative account changes.
+- `admin_audit_log`: actor, target resource, action, request correlation ID, and timestamp for successful admin actions.
 
 `runNumber` identifies a scheduled firing; `attemptNumber` counts retries within that firing. A new cron occurrence gets a fresh retry budget while preserving all earlier executions.
 
@@ -184,6 +184,7 @@ Retries use full jitter over an exponential delay, set with `TASKFORGE_RETRY_BAS
 - A Spring Boot Testcontainers scenario boots PostgreSQL, Redis, and Kafka together, sends an outbox record through a real worker, and verifies duplicate Kafka delivery does not create a second execution.
 - Redis and Kafka Testcontainers smoke tests check the infrastructure protocols.
 - Testcontainers tests are skipped when Docker is not available; run `mvn test` with Docker running to exercise them.
+- `load/taskforge-load.js` provides an optional k6 end-to-end load scenario. Start the Compose stack, create a normal user, then run `k6 run -e TASKFORGE_EMAIL=dev@example.com -e TASKFORGE_PASSWORD=your-password load/taskforge-load.js`. Adjust `JOBS_PER_MINUTE` and `TEST_DURATION` to scale the arrival rate and duration; watch queue depth and worker metrics while the dashboard shows the live flow.
 
 ## Design decisions and next improvements
 
