@@ -30,3 +30,5 @@ jobs:
           cache: maven
       - name: Run tests and package
         run: mvn --batch-mode --no-transfer-progress verify
+      - name: Build application image
+        run: docker build --pull --tag taskforge:ci .
