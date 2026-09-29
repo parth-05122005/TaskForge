@@ -20,4 +20,8 @@ public class WorkerRuntime {
     private static String localHostname(){try{return InetAddress.getLocalHost().getHostName();}catch(Exception e){return "taskforge-worker";}}
     public String id(){return workerId;}
     @Scheduled(fixedDelayString="${taskforge.heartbeat-interval:5000}") @org.springframework.transaction.annotation.Transactional public void heartbeat(){var now=java.time.Instant.now();workers.touch(workerId);executions.extendWorkerLeases(workerId,now.plusSeconds(30));try{redis.opsForValue().set("taskforge:worker:"+workerId+":heartbeat",now.toString(),java.time.Duration.ofSeconds(20));}catch(RuntimeException e){org.slf4j.LoggerFactory.getLogger(WorkerRuntime.class).warn("Redis heartbeat write failed; PostgreSQL heartbeat remains available",e);}}
+    @jakarta.annotation.PreDestroy public void shutdown(){
+        try{workers.markOffline(workerId);}catch(RuntimeException failure){org.slf4j.LoggerFactory.getLogger(WorkerRuntime.class).warn("Could not mark worker offline during shutdown",failure);}
+        try{redis.delete("taskforge:worker:"+workerId+":heartbeat");}catch(RuntimeException failure){org.slf4j.LoggerFactory.getLogger(WorkerRuntime.class).warn("Could not remove worker Redis heartbeat during shutdown",failure);}
+    }
 }

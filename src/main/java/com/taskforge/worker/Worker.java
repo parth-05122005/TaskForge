@@ -20,5 +20,6 @@ public class Worker {
     public void assign(Long jobId){currentJobId=jobId;status=WorkerStatus.BUSY;heartbeat();}
     public void idle(){currentJobId=null;status=WorkerStatus.ONLINE;heartbeat();}
     public void markDead(){status=WorkerStatus.DEAD;updatedAt=Instant.now();}
+    public void markOffline(){status=WorkerStatus.OFFLINE;updatedAt=Instant.now();}
     public void recovered(){currentJobId=null;status=lastHeartbeat.isBefore(Instant.now().minusSeconds(20))?WorkerStatus.DEAD:WorkerStatus.ONLINE;updatedAt=Instant.now();}
 }
