@@ -39,8 +39,11 @@ public class ExecutionConsumer {
             String leaseToken=workflow.claim(message,runtime.id());
             if(leaseToken==null){if(workflow.isRunning(message.executionId()))acknowledgment.nack(Duration.ofSeconds(1));else acknowledgment.acknowledge();return;}
             log.atInfo().addKeyValue("jobId",message.jobId()).addKeyValue("executionId",message.executionId()).addKeyValue("workerId",runtime.id()).addKeyValue("attempt",message.attempt()).log("Worker claimed execution");
-            CountDownLatch handlerEnded=new CountDownLatch(1);java.util.concurrent.atomic.AtomicBoolean handlerStarted=new java.util.concurrent.atomic.AtomicBoolean();
-            Future<?> running=executionPool.submit((Callable<Void>)()->{handlerStarted.set(true);try{handlers.get(message.type()).execute(message);return null;}finally{handlerEnded.countDown();}});
+            CountDownLatch handlerEnded=new CountDownLatch(1);java.util.concurrent.atomic.AtomicBoolean handlerStarted=new java.util.concurrent.atomic.AtomicBoolean();java.util.concurrent.atomic.AtomicBoolean preventHandlerStart=new java.util.concurrent.atomic.AtomicBoolean();Object handlerStartGate=new Object();
+            Future<?> running=executionPool.submit((Callable<Void>)()->{
+                synchronized(handlerStartGate){if(preventHandlerStart.get()){handlerEnded.countDown();return null;}handlerStarted.set(true);}
+                try{handlers.get(message.type()).execute(message);return null;}finally{handlerEnded.countDown();}
+            });
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(message.timeoutSeconds());
             try {
                 boolean finished=false;
@@ -53,13 +56,13 @@ public class ExecutionConsumer {
                         finished=true;
                     } catch(TimeoutException pending) {
                         if(workflow.isCancellationRequested(message.jobId())) {
-                            boolean stopped=interruptAndAwait(running,handlerStarted,handlerEnded);
+                            boolean stopped=interruptAndAwait(running,handlerStarted,preventHandlerStart,handlerStartGate,handlerEnded);
                             String detail=stopped?"Execution stopped after cancellation request":"Handler ignored cancellation interruption; execution was marked cancelled and will not be retried automatically";
                             if(!stopped)log.atError().addKeyValue("jobId",message.jobId()).addKeyValue("executionId",message.executionId()).addKeyValue("workerId",runtime.id()).log("Handler did not stop during cancellation grace period");
                             workflow.finish(message,runtime.id(),leaseToken,JobStatus.CANCELLED,false,detail);
                             finished=true;
                         } else if(System.nanoTime()>=deadline) {
-                            boolean stopped=interruptAndAwait(running,handlerStarted,handlerEnded);
+                            boolean stopped=interruptAndAwait(running,handlerStarted,preventHandlerStart,handlerStartGate,handlerEnded);
                             String detail=stopped?"Execution exceeded timeout of "+message.timeoutSeconds()+" seconds":"Handler ignored timeout interruption; execution was marked terminal and will not be retried automatically. Isolate this handler in a process to guarantee termination.";
                             if(!stopped)log.atError().addKeyValue("jobId",message.jobId()).addKeyValue("executionId",message.executionId()).addKeyValue("workerId",runtime.id()).log("Handler did not stop during timeout grace period; disabling automatic retry for this run");
                             workflow.finish(message,runtime.id(),leaseToken,JobStatus.TIMEOUT,stopped,detail);
@@ -86,9 +89,12 @@ public class ExecutionConsumer {
         }
     }
 
-    private boolean interruptAndAwait(Future<?> running,java.util.concurrent.atomic.AtomicBoolean handlerStarted,CountDownLatch handlerEnded)throws InterruptedException{
-        running.cancel(true);
-        return !handlerStarted.get()||handlerEnded.await(handlerStopGraceSeconds,TimeUnit.SECONDS);
+    private boolean interruptAndAwait(Future<?> running,java.util.concurrent.atomic.AtomicBoolean handlerStarted,java.util.concurrent.atomic.AtomicBoolean preventHandlerStart,Object handlerStartGate,CountDownLatch handlerEnded)throws InterruptedException{
+        synchronized(handlerStartGate){
+            if(!handlerStarted.get()){preventHandlerStart.set(true);running.cancel(true);return true;}
+            running.cancel(true);
+        }
+        return handlerEnded.await(handlerStopGraceSeconds,TimeUnit.SECONDS);
     }
 
     @PreDestroy public void shutdown(){executionPool.shutdownNow();}
