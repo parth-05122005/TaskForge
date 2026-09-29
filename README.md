@@ -191,6 +191,7 @@ Retries use full jitter over an exponential delay, set with `TASKFORGE_RETRY_BAS
 
 ## Testing
 
+- GitHub Actions runs `mvn --batch-mode --no-transfer-progress verify` on pushes and pull requests to `main`; its Linux runner enables the Testcontainers-backed integration tests.
 - Unit and service tests cover lifecycle rules, cron/time-zone calculation, retry backoff, controller validation, ownership checks, worker claim/idempotency behavior, and outbox retry behavior.
 - PostgreSQL Testcontainers tests race two scheduler instances and two workers, verify atomic claims and scheduler/outbox persistence, check the lease deadline cap, and recover crashed/cancelled/exhausted attempts.
 - PostgreSQL Testcontainers tests verify that outbox retention prunes old acknowledged rows while keeping recent and pending messages.
