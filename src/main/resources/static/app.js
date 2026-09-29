@@ -1,6 +1,6 @@
 const $ = (selector) => document.querySelector(selector);
 const tokenKey = "taskforge.jwt";
-const initialSince = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+let initialSince = new Date(Date.now() - 60 * 60 * 1000).toISOString();
 let eventCursor = 0;
 let timer = null;
 let refreshing = false;
@@ -19,7 +19,7 @@ async function api(path, options = {}) {
   const token = sessionStorage.getItem(tokenKey);
   if (token) headers.Authorization = `Bearer ${token}`;
   const response = await fetch(path, { ...options, headers });
-  if (response.status === 401) { sessionStorage.removeItem(tokenKey); setAuthState(); throw new Error("Session expired. Sign in again."); }
+  if (response.status === 401) { sessionStorage.removeItem(tokenKey); resetEventCursor(); setAuthState(); throw new Error("Session expired. Sign in again."); }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.message || `Request failed (${response.status})`);
   return body;
@@ -77,6 +77,8 @@ function render(snapshot) {
   if (snapshot.events.length) eventCursor = Math.max(eventCursor, ...snapshot.events.map((event) => event.id));
 }
 
+function resetEventCursor() { eventCursor = 0; initialSince = new Date(Date.now() - 60 * 60 * 1000).toISOString(); }
+
 async function refresh() {
   const currentToken = sessionStorage.getItem(tokenKey);
   if (!currentToken || refreshing) return;
@@ -100,7 +102,7 @@ async function showHistory(job) {
 
 $("#auth-form").addEventListener("submit", (event) => { event.preventDefault(); authenticate(false); });
 $("#register").addEventListener("click", () => authenticate(true));
-$("#logout").addEventListener("click", () => { sessionStorage.removeItem(tokenKey); eventCursor = 0; setAuthState(); });
+$("#logout").addEventListener("click", () => { sessionStorage.removeItem(tokenKey); resetEventCursor(); setAuthState(); });
 $("#refresh").addEventListener("click", refresh);
 $("#close-detail").addEventListener("click", () => $("#job-detail").close());
 $("#job-form").elements.scheduleType.addEventListener("change", (event) => {
