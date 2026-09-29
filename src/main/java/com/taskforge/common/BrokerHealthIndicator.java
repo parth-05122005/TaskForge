@@ -18,6 +18,7 @@ public class BrokerHealthIndicator implements HealthIndicator, AutoCloseable {
     private final boolean required;
     private final AdminClient admin;
 
+    @org.springframework.beans.factory.annotation.Autowired
     public BrokerHealthIndicator(KafkaAdmin kafkaAdmin, @Value("${taskforge.role:api}") String role) {
         this.required = "worker".equals(role);
         if (required) {

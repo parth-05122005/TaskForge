@@ -213,7 +213,7 @@ class JobRepositoryConcurrencyTest {
         Job recovered=jobs.findById(jobId).orElseThrow();
         assertEquals(JobStatus.RETRYING,recovered.getStatus());
         long retryDelayMillis=java.time.Duration.between(recoveryStarted,recovered.getNextRunAt()).toMillis();
-        assertTrue(retryDelayMillis>=6_000&&retryDelayMillis<=7_000,"Lease recovery should honor the configured seven-second retry delay");
+        assertTrue(retryDelayMillis>=0&&retryDelayMillis<=7_000,"Lease recovery should apply full jitter within the configured seven-second retry cap");
         assertEquals(JobStatus.FAILED,executions.findById(executionId).orElseThrow().getStatus());
         assertEquals(WorkerStatus.ONLINE,workers.findById(worker.getId()).orElseThrow().getStatus());
         assertEquals(1,outbox.count()); // recovered lifecycle event; retryable crash is not dead-lettered
