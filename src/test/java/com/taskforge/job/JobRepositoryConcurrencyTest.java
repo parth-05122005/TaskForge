@@ -165,11 +165,16 @@ class JobRepositoryConcurrencyTest {
     @Test @org.springframework.transaction.annotation.Transactional(propagation=org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void queuedExecutionCanOnlyBeClaimedOnce(){
         User owner=users.save(new User("claim@example.com","hash"));Worker worker=workers.save(new Worker("worker-test","test-host"));
-        Job job=new Job(owner,"claim",null,"REPORT","{}",ScheduleType.IMMEDIATE,null,Instant.now(),JobPriority.MEDIUM,1,30);job.beginScheduledRun();job.transition(JobStatus.QUEUED);job=jobs.save(job);
-        JobExecution execution=executions.save(new JobExecution(job,1));Long jobId=job.getId(),executionId=execution.getId();int runNumber=job.getRunNumber();TransactionTemplate tx=new TransactionTemplate(transactionManager);
-        int claimed=tx.execute(s->{int e=executions.claimQueued(executionId,jobId,runNumber,worker.getId(),"lease-one",45);return e==1?jobs.claimQueued(jobId):0;});
-        int duplicate=tx.execute(s->executions.claimQueued(executionId,jobId,runNumber,worker.getId(),"lease-two",45));
-        assertEquals(1,claimed);assertEquals(0,duplicate);
+        Job job=new Job(owner,"claim",null,"REPORT","{}",ScheduleType.IMMEDIATE,null,Instant.now(),JobPriority.MEDIUM,1,1);job.beginScheduledRun();job.transition(JobStatus.QUEUED);job=jobs.save(job);
+        JobExecution execution=executions.save(new JobExecution(job,1));Long jobId=job.getId(),executionId=execution.getId();
+        var mapper=new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules();var eventService=new JobEventService(events,outbox,mapper);
+        var workflow=new com.taskforge.worker.ExecutionWorkflowService(jobs,executions,workers,eventService,outbox,mapper,new TaskForgeMetrics(new SimpleMeterRegistry(),jobs,workers));
+        JobMessage message=new JobMessage(jobId,executionId,job.getRunNumber(),job.getType(),job.getPayload(),job.getPriority().name(),1,job.getTimeoutSeconds());TransactionTemplate tx=new TransactionTemplate(transactionManager);
+        String claimed=tx.execute(s->workflow.claim(message,worker.getId()));
+        String duplicate=tx.execute(s->workflow.claim(message,worker.getId()));
+        assertNotNull(claimed);assertNull(duplicate);
+        JobExecution initiallyClaimed=executions.findById(executionId).orElseThrow();
+        assertFalse(initiallyClaimed.getLeaseUntil().isAfter(initiallyClaimed.getStartedAt().plusSeconds(21)),"The initial lease must honor timeout plus the 20-second safety ceiling");
         tx.execute(s->executions.extendWorkerLeases(worker.getId(),Instant.now().plusSeconds(30)));
         JobExecution active=executions.findById(executionId).orElseThrow();
         assertFalse(active.getLeaseUntil().isAfter(active.getStartedAt().plusSeconds(50)),"A live heartbeat must not keep a non-cooperative handler leased forever");

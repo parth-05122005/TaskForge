@@ -23,7 +23,7 @@ public class ExecutionWorkflowService {
         Job job=jobs.findByIdForUpdate(message.jobId()).orElse(null);
         if(job==null||job.getStatus()!=JobStatus.QUEUED||job.getRunNumber()!=message.runNumber())return null;
         String token=UUID.randomUUID().toString();
-        int executionClaimed=executions.claimQueued(message.executionId(),message.jobId(),message.runNumber(),workerId,token,Math.max(30,message.timeoutSeconds()+15));
+        int executionClaimed=executions.claimQueued(message.executionId(),message.jobId(),message.runNumber(),workerId,token,message.timeoutSeconds()+15);
         if(executionClaimed==0)return null;
         int jobClaimed=jobs.claimQueued(message.jobId());
         if(jobClaimed!=1)throw new IllegalStateException("Execution was claimed but its job was not queued; rolling back claim");
