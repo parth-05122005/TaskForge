@@ -85,6 +85,7 @@ Redis stores TTL-based worker heartbeats, rate-limit counters, and optional job 
 - Five- or six-field cron expressions, IANA time zones, and a skip-missed-runs policy: a missed cron occurrence is not replayed; the next future occurrence is calculated after the current run finishes.
 - Retryable and permanent failures, configurable capped exponential retry delay, cooperative execution timeouts, durable running-job cancellation requests, and a `taskforge.jobs.dlq` event when retries are exhausted.
 - `taskforge.jobs.events` lifecycle events are stored in PostgreSQL, relayed through the outbox, and consumed by a separate notification/logging listener. The operator dashboard polls persisted state every 1.5 seconds and displays jobs, assignments, workers, attempts, and events.
+- Dashboard and admin job/worker status totals use grouped database queries, rather than one status-count query per lifecycle state on every refresh.
 - Flyway schema migration, Actuator, Prometheus metrics, request IDs, structured log fields, rate limits, OpenAPI/Swagger, and Docker Compose.
 - Execution duration is exported as an aggregate timer with no user-controlled labels, keeping Prometheus metric cardinality bounded even when job types are arbitrary strings.
 

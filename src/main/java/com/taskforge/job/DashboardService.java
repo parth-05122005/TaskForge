@@ -14,7 +14,9 @@ public class DashboardService {
     public DashboardSnapshot snapshot(String email,boolean admin,Instant since,Long afterId){
         var user=users.findByEmail(email).orElseThrow();
         var counts=new LinkedHashMap<String,Long>();
-        for(JobStatus s:JobStatus.values())counts.put(s.name(),admin?jobs.countByStatus(s):jobs.countByOwnerAndStatus(user.getId(),s));
+        for(JobStatus status:JobStatus.values())counts.put(status.name(),0L);
+        var groupedCounts=admin?jobs.countGroupedByStatus():jobs.countGroupedByOwnerStatus(user.getId());
+        groupedCounts.forEach(row->counts.put(row.getStatus().name(),row.getTotal()));
         var jobPage=admin?jobs.findAll(PageRequest.of(0,100,Sort.by(Sort.Direction.DESC,"updatedAt"))):jobs.findByOwnerId(user.getId(),PageRequest.of(0,100,Sort.by(Sort.Direction.DESC,"updatedAt")));
         var recent=since==null?Instant.now().minusSeconds(3600):since;
         var eventPage=afterId!=null

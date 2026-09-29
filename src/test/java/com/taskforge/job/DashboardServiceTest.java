@@ -21,6 +21,8 @@ class DashboardServiceTest {
         DashboardSnapshot snapshot=new DashboardService(jobs,events,workers,users).snapshot("owner@example.com",false,null,91L);
 
         assertFalse(snapshot.admin());assertTrue(snapshot.workers().isEmpty());verify(events).findAfterIdForOwner(eq(42L),eq(91L),any());verify(events,never()).findTop200ByIdGreaterThanOrderByIdAsc(anyLong());verifyNoInteractions(workers);
+        verify(jobs).countGroupedByOwnerStatus(42L);verify(jobs,never()).countByOwnerAndStatus(anyLong(),any());
+        assertEquals(0L,snapshot.counts().get(JobStatus.SUCCESS.name()));
     }
 
     @Test void initialSnapshotUsesLookbackWindowForEventBootstrap(){
@@ -31,6 +33,6 @@ class DashboardServiceTest {
 
         DashboardSnapshot snapshot=new DashboardService(jobs,events,workers,users).snapshot("admin@example.com",true,null,null);
 
-        assertTrue(snapshot.admin());verify(events).findTop200ByCreatedAtGreaterThanEqualOrderByIdAsc(any());verify(workers).findAllByOrderByLastHeartbeatDesc();
+        assertTrue(snapshot.admin());verify(jobs).countGroupedByStatus();verify(events).findTop200ByCreatedAtGreaterThanEqualOrderByIdAsc(any());verify(workers).findAllByOrderByLastHeartbeatDesc();
     }
 }
