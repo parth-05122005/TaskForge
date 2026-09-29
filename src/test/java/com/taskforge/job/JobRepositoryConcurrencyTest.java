@@ -10,6 +10,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.jdbc.core.JdbcTemplate;
 import com.taskforge.common.TaskForgeMetrics;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -26,9 +27,22 @@ import static org.junit.jupiter.api.Assertions.*;
 class JobRepositoryConcurrencyTest {
     @Container static final PostgreSQLContainer<?> postgres=new PostgreSQLContainer<>("postgres:17-alpine");
     @DynamicPropertySource static void database(DynamicPropertyRegistry r){r.add("spring.datasource.url",postgres::getJdbcUrl);r.add("spring.datasource.username",postgres::getUsername);r.add("spring.datasource.password",postgres::getPassword);}
-    @Autowired JobRepository jobs;@Autowired UserRepository users;@Autowired JobExecutionRepository executions;@Autowired WorkerRepository workers;@Autowired OutboxRepository outbox;@Autowired JobEventRepository events;@Autowired PlatformTransactionManager transactionManager;
+    @Autowired JobRepository jobs;@Autowired UserRepository users;@Autowired JobExecutionRepository executions;@Autowired WorkerRepository workers;@Autowired OutboxRepository outbox;@Autowired JobEventRepository events;@Autowired PlatformTransactionManager transactionManager;@Autowired JdbcTemplate jdbc;
 
     @BeforeEach void clearCommittedFixtures(){TransactionTemplate cleanup=new TransactionTemplate(transactionManager);cleanup.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);cleanup.execute(s->{events.deleteAll();executions.deleteAll();workers.deleteAll();jobs.deleteAll();outbox.deleteAll();users.deleteAll();return null;});}
+
+    @Test void retentionDeletesOnlyAcknowledgedRowsPastCutoffInBoundedBatches(){
+        Instant cutoff=Instant.now().minusSeconds(60);
+        OutboxMessage oldPublished=new OutboxMessage("topic","old","{}");oldPublished.markPublished();oldPublished=outbox.saveAndFlush(oldPublished);
+        OutboxMessage recentPublished=new OutboxMessage("topic","recent","{}");recentPublished.markPublished();recentPublished=outbox.saveAndFlush(recentPublished);
+        OutboxMessage pending=new OutboxMessage("topic","pending","{}");pending=outbox.saveAndFlush(pending);
+        jdbc.update("update outbox_messages set published_at=? where id=?",java.sql.Timestamp.from(cutoff.minusSeconds(1)),oldPublished.getId());
+
+        assertEquals(1,outbox.deletePublishedBefore(cutoff,1_000));
+        assertFalse(outbox.existsById(oldPublished.getId()));
+        assertTrue(outbox.existsById(recentPublished.getId()));
+        assertTrue(outbox.existsById(pending.getId()));
+    }
 
     @Test @org.springframework.transaction.annotation.Transactional(propagation=org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void concurrentSchedulersDoNotClaimTheSameDueJob() throws Exception {

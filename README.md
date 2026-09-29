@@ -114,6 +114,8 @@ For a local Maven check, use `mvn test package`. Testcontainers integration test
 | `TASKFORGE_ADMIN_EMAIL`, `TASKFORGE_ADMIN_PASSWORD` | Optional first-start admin bootstrap; existing accounts are not promoted |
 | `TASKFORGE_SCHEDULER_INTERVAL` | Due-job polling interval in milliseconds |
 | `TASKFORGE_OUTBOX_INTERVAL` | Outbox relay polling interval in milliseconds |
+| `TASKFORGE_OUTBOX_RETENTION_DAYS` | Days to retain Kafka-acknowledged outbox rows before batched pruning; minimum 1, default 14 |
+| `TASKFORGE_OUTBOX_RETENTION_INTERVAL` | Delay between outbox retention passes in milliseconds; default 6 hours |
 | `TASKFORGE_HEARTBEAT_INTERVAL` | Worker heartbeat interval in milliseconds |
 | `TASKFORGE_RECOVERY_INTERVAL` | Lease/dead-worker recovery interval in milliseconds |
 | `TASKFORGE_HANDLER_STOP_GRACE_SECONDS` | Seconds to wait after interrupting a handler before recording a terminal no-retry timeout/cancellation; valid range is 1–60 |
@@ -164,7 +166,7 @@ Job types implemented as separate local handler strategies: `REPORT`, `REPORT_GE
 
 ## Delivery, retries, and limits
 
-The scheduler locks due rows with `FOR UPDATE SKIP LOCKED`, then persists the queued job, execution row, and execute-topic outbox record in one PostgreSQL transaction. The relay publishes and waits for Kafka acknowledgement before marking the outbox row delivered. A crash after Kafka acknowledgement but before that database update can publish the same message twice; workers use an atomic execution claim and lease token to prevent a duplicate from changing durable completion state.
+The scheduler locks due rows with `FOR UPDATE SKIP LOCKED`, then persists the queued job, execution row, and execute-topic outbox record in one PostgreSQL transaction. The relay publishes and waits for Kafka acknowledgement before marking the outbox row delivered. A crash after Kafka acknowledgement but before that database update can publish the same message twice; workers use an atomic execution claim and lease token to prevent a duplicate from changing durable completion state. A scheduled, batched retention task prunes only acknowledged outbox transport rows older than `TASKFORGE_OUTBOX_RETENTION_DAYS` (14 days by default); pending messages and durable job lifecycle history are untouched.
 
 This is **at-least-once** processing, not exactly-once side effects. A process can crash after an external side effect but before completion is committed. Handlers must be idempotent where possible. Workers poll the durable cancellation flag while running and interrupt cooperative handlers; timeout handling also requests interruption. The worker waits for the configured stop grace before recording a result. If a handler ignores interruption, the attempt is marked terminal and is not retried automatically; a CRON job is failed closed rather than starting another occurrence that could overlap the still-running code. The Java thread may remain alive, and an operator must ensure it has stopped before manually triggering the job again. Java cannot forcibly stop arbitrary non-cooperative code. Heartbeats cannot extend a lease past the execution timeout plus a 20-second ceiling, and recovery waits for that lease to expire plus a 10-second safety grace. For untrusted or non-interruptible workloads, use a process/container isolation boundary and terminate that isolated workload at its deadline.
 
@@ -178,6 +180,7 @@ Retries use full jitter over an exponential delay, set with `TASKFORGE_RETRY_BAS
 
 - Unit and service tests cover lifecycle rules, cron/time-zone calculation, retry backoff, controller validation, ownership checks, worker claim/idempotency behavior, and outbox retry behavior.
 - PostgreSQL Testcontainers tests race two scheduler instances and two workers, verify atomic claims and scheduler/outbox persistence, check the lease deadline cap, and recover crashed/cancelled/exhausted attempts.
+- PostgreSQL Testcontainers tests verify that outbox retention prunes old acknowledged rows while keeping recent and pending messages.
 - A Spring Boot Testcontainers scenario boots PostgreSQL, Redis, and Kafka together, sends an outbox record through a real worker, and verifies duplicate Kafka delivery does not create a second execution.
 - Redis and Kafka Testcontainers smoke tests check the infrastructure protocols.
 - Testcontainers tests are skipped when Docker is not available; run `mvn test` with Docker running to exercise them.
@@ -190,4 +193,4 @@ Retries use full jitter over an exponential delay, set with `TASKFORGE_RETRY_BAS
 - The container tests are authoritative for database migration and full app wiring; they must run with Docker Desktop running before relying on those deployment paths.
 - Dashboard updates use short-interval authenticated polling rather than WebSockets; persisted events make reconnects recoverable.
 - Local Compose binds service ports to loopback and runs the application as a non-root user. Compose credentials are development-only and Kafka/Redis are not authenticated; production requires private networking, TLS/authentication, secret management, replicated services, backups, and alerting.
-- Next production hardening: add jitter to retry delays, outbox retention/archival, process isolation for arbitrary handlers, richer admin audit logs, chaos/load tests against a multi-node deployment, and a production Kafka/PostgreSQL/Redis security and HA configuration.
+- Next production hardening: process isolation for arbitrary handlers, broader admin audit logs, chaos/load tests against a multi-node deployment, and a production Kafka/PostgreSQL/Redis security and HA configuration.
