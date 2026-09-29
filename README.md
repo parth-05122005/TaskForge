@@ -96,7 +96,7 @@ Redis stores TTL-based worker heartbeats, rate-limit counters, and optional job 
 Requirements: Docker Desktop, Java 21+, and Maven 3.9+.
 
 1. Copy `.env.example` to `.env`.
-2. Set unique `DB_PASSWORD` and a random `JWT_SECRET` of at least 32 bytes. Set `TASKFORGE_ADMIN_EMAIL` and a unique `TASKFORGE_ADMIN_PASSWORD` (at least 16 characters) if you want the first API startup to create an admin account.
+2. Set unique `DB_PASSWORD` and a random `JWT_SECRET` of at least 32 bytes in `.env`; the example intentionally leaves secrets blank, and Compose refuses to start until required values are set. The application has no fallback database password. Set both `TASKFORGE_ADMIN_EMAIL` and a unique `TASKFORGE_ADMIN_PASSWORD` (16 to 72 characters) if you want the first API startup to create an admin account; leave both blank otherwise.
 3. Run:
 
 ```sh
