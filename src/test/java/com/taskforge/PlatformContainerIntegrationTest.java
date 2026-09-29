@@ -6,9 +6,13 @@ import com.taskforge.auth.UserRepository;
 import com.taskforge.job.*;
 import com.taskforge.worker.Worker;
 import com.taskforge.worker.WorkerRepository;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -31,6 +35,8 @@ import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest
 @Testcontainers(disabledWithoutDocker=true)
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class PlatformContainerIntegrationTest {
     @Container static final PostgreSQLContainer<?> postgres=new PostgreSQLContainer<>("postgres:17-alpine");
     @Container static final GenericContainer<?> redis=new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
@@ -56,6 +62,9 @@ class PlatformContainerIntegrationTest {
     @Autowired KafkaTemplate<String,String> kafkaTemplate;
     @Autowired ObjectMapper mapper;
     @Autowired PlatformTransactionManager transactionManager;
+    @Autowired ConfigurableApplicationContext applicationContext;
+
+    @AfterAll void closeApplicationContextBeforeContainersStop(){applicationContext.close();}
 
     @Test void outboxDeliveryWorkerExecutionAndDuplicateKafkaDeliveryAreDurable() throws Exception {
         assertTrue(workers.count()>0,"worker runtime should register itself at startup");

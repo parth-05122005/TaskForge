@@ -19,7 +19,7 @@ public class ExecutionWorkflowService {
         // execution first, then job. Reversing this order can deadlock when a
         // recovery sweep and a redelivered Kafka message race on the same run.
         JobExecution execution=executions.findByIdForUpdate(message.executionId()).orElse(null);
-        if(execution==null||execution.getStatus()!=JobStatus.QUEUED||execution.getRunNumber()!=message.runNumber()||!java.util.Objects.equals(execution.getJob().getId(),message.jobId()))return null;
+        if(execution==null||execution.getStatus()!=JobStatus.QUEUED||execution.getRunNumber()!=message.runNumber()||execution.getAttemptNumber()!=message.attempt()||!java.util.Objects.equals(execution.getJob().getId(),message.jobId()))return null;
         Job job=jobs.findByIdForUpdate(message.jobId()).orElse(null);
         if(job==null||job.getStatus()!=JobStatus.QUEUED||job.getRunNumber()!=message.runNumber())return null;
         String token=UUID.randomUUID().toString();

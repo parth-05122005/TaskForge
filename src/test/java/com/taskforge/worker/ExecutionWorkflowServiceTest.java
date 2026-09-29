@@ -21,11 +21,25 @@ class ExecutionWorkflowServiceTest {
 
     @Test void claimAtomicallyClaimsJobAndExecutionOnce(){
         Job queued=job(JobStatus.QUEUED,2),executionJob=mock(Job.class);when(executionJob.getId()).thenReturn(11L);
-        JobExecution queuedExecution=mock(JobExecution.class);when(queuedExecution.getStatus()).thenReturn(JobStatus.QUEUED);when(queuedExecution.getRunNumber()).thenReturn(1);when(queuedExecution.getJob()).thenReturn(executionJob);
+        JobExecution queuedExecution=mock(JobExecution.class);when(queuedExecution.getStatus()).thenReturn(JobStatus.QUEUED);when(queuedExecution.getRunNumber()).thenReturn(1);when(queuedExecution.getAttemptNumber()).thenReturn(1);when(queuedExecution.getJob()).thenReturn(executionJob);
         when(executions.findByIdForUpdate(22L)).thenReturn(Optional.of(queuedExecution));when(jobs.findByIdForUpdate(11L)).thenReturn(Optional.of(queued));when(executions.claimQueued(eq(22L),eq(11L),eq(1),eq("worker-1"),anyString(),anyInt())).thenReturn(1);when(jobs.claimQueued(11L)).thenReturn(1);when(workers.findById("worker-1")).thenReturn(Optional.of(new Worker("worker-1","host")));
         String token=service.claim(message(1),"worker-1");assertNotNull(token);verify(jobs).claimQueued(11L);
         when(jobs.findByIdForUpdate(11L)).thenReturn(Optional.of(queued));assertNull(service.claim(message(1),"worker-2"));
         verify(executions,times(1)).claimQueued(eq(22L),eq(11L),eq(1),eq("worker-1"),anyString(),anyInt());
+    }
+
+    @Test void claimRejectsMessageWhoseAttemptDoesNotMatchDurableExecution(){
+        JobExecution queuedExecution=mock(JobExecution.class);
+        when(queuedExecution.getStatus()).thenReturn(JobStatus.QUEUED);
+        when(queuedExecution.getRunNumber()).thenReturn(1);
+        when(queuedExecution.getAttemptNumber()).thenReturn(2);
+        Job executionJob=mock(Job.class);when(executionJob.getId()).thenReturn(11L);
+        when(queuedExecution.getJob()).thenReturn(executionJob);
+        when(executions.findByIdForUpdate(22L)).thenReturn(Optional.of(queuedExecution));
+
+        assertNull(service.claim(message(1),"worker-1"));
+        verify(jobs,never()).findByIdForUpdate(anyLong());
+        verify(executions,never()).claimQueued(anyLong(),anyLong(),anyInt(),anyString(),anyString(),anyInt());
     }
 
     @Test void transientFailureSchedulesRetryWithPersistedEvent(){
