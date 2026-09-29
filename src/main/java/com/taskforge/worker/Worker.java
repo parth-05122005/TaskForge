@@ -21,5 +21,5 @@ public class Worker {
     public void idle(){currentJobId=null;status=WorkerStatus.ONLINE;heartbeat();}
     public void markDead(){status=WorkerStatus.DEAD;updatedAt=Instant.now();}
     public void markOffline(){status=WorkerStatus.OFFLINE;updatedAt=Instant.now();}
-    public void recovered(){currentJobId=null;status=lastHeartbeat.isBefore(Instant.now().minusSeconds(20))?WorkerStatus.DEAD:WorkerStatus.ONLINE;updatedAt=Instant.now();}
+    public void recovered(java.time.Duration deadAfter){currentJobId=null;if(status!=WorkerStatus.OFFLINE)status=lastHeartbeat.isBefore(Instant.now().minus(deadAfter))?WorkerStatus.DEAD:WorkerStatus.ONLINE;updatedAt=Instant.now();}
 }

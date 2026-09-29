@@ -31,6 +31,25 @@ class JobRepositoryConcurrencyTest {
 
     @BeforeEach void clearCommittedFixtures(){TransactionTemplate cleanup=new TransactionTemplate(transactionManager);cleanup.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);cleanup.execute(s->{events.deleteAll();executions.deleteAll();workers.deleteAll();jobs.deleteAll();outbox.deleteAll();users.deleteAll();return null;});}
 
+    @Test void postgresRejectsUnknownJobStatus(){
+        User owner=users.saveAndFlush(new User("schema-constraints@example.com","hash"));
+        assertThrows(org.springframework.dao.DataIntegrityViolationException.class,()->jdbc.update("insert into jobs(owner_id,name,type,payload,schedule_type,priority,status,max_retries,timeout_seconds) values(?,?,?,?,?,?,?,?,?)",owner.getId(),"invalid state","REPORT","{}","IMMEDIATE","MEDIUM","UNKNOWN",0,30));
+    }
+
+    @Test void postgresRejectsCronJobsWithoutExpression(){
+        User owner=users.saveAndFlush(new User("cron-constraint@example.com","hash"));
+        assertThrows(org.springframework.dao.DataIntegrityViolationException.class,()->jdbc.update("insert into jobs(owner_id,name,type,payload,schedule_type,priority,status,max_retries,timeout_seconds) values(?,?,?,?,?,?,?,?,?)",owner.getId(),"missing cron","REPORT","{}","CRON","MEDIUM","CREATED",0,30));
+    }
+
+    @Test void postgresRejectsDueStatesWithoutNextRunTime(){
+        User owner=users.saveAndFlush(new User("due-time-constraint@example.com","hash"));
+        assertThrows(org.springframework.dao.DataIntegrityViolationException.class,()->jdbc.update("insert into jobs(owner_id,name,type,payload,schedule_type,priority,status,max_retries,timeout_seconds) values(?,?,?,?,?,?,?,?,?)",owner.getId(),"missing due time","REPORT","{}","ONE_TIME","MEDIUM","SCHEDULED",0,30));
+    }
+
+    @Test void postgresRejectsInvalidWorkerState(){
+        assertThrows(org.springframework.dao.DataIntegrityViolationException.class,()->jdbc.update("insert into workers(id,hostname,status,last_heartbeat,registered_at,updated_at) values(?,?,?,?,?,?)","bad-worker","host","UNKNOWN",java.sql.Timestamp.from(Instant.now()),java.sql.Timestamp.from(Instant.now()),java.sql.Timestamp.from(Instant.now())));
+    }
+
     @Test void retentionDeletesOnlyAcknowledgedRowsPastCutoffInBoundedBatches(){
         Instant cutoff=Instant.now().minusSeconds(60);
         OutboxMessage oldPublished=new OutboxMessage("topic","old","{}");oldPublished.markPublished();oldPublished=outbox.saveAndFlush(oldPublished);

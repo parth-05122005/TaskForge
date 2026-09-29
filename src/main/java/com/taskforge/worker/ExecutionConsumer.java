@@ -39,7 +39,7 @@ public class ExecutionConsumer {
         catch(JsonProcessingException malformed){deadLetterMalformed(payload,acknowledgment,"malformed JSON: "+malformed.getOriginalMessage());return;}
         if(!hasValidExecutionFields(message)){deadLetterMalformed(payload,acknowledgment,"missing or out-of-range required execution fields");return;}
         if(!executionSlot.tryAcquire()){acknowledgment.nack(Duration.ofSeconds(1));return;}
-        String key="taskforge:lock:job:"+message.jobId(),token=UUID.randomUUID().toString();
+            String key="taskforge:lock:job:"+message.jobId(),token=UUID.randomUUID().toString();
         boolean redisAvailable=true;
         boolean locked=false;
         try {locked=Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(key,token,Duration.ofSeconds(Math.max(30,message.timeoutSeconds()+20L))));}
@@ -53,8 +53,8 @@ public class ExecutionConsumer {
             CountDownLatch handlerEnded=new CountDownLatch(1);java.util.concurrent.atomic.AtomicBoolean handlerStarted=new java.util.concurrent.atomic.AtomicBoolean();java.util.concurrent.atomic.AtomicBoolean preventHandlerStart=new java.util.concurrent.atomic.AtomicBoolean();Object handlerStartGate=new Object();
             java.util.concurrent.atomic.AtomicBoolean slotReleased=new java.util.concurrent.atomic.AtomicBoolean();
             Future<?> running=executionPool.submit((Callable<Void>)()->{
-                synchronized(handlerStartGate){if(preventHandlerStart.get()){handlerEnded.countDown();releaseExecutionSlot(slotReleased);return null;}handlerStarted.set(true);}
-                try{handlers.get(message.type()).execute(message);return null;}finally{handlerEnded.countDown();releaseExecutionSlot(slotReleased);}
+                synchronized(handlerStartGate){if(preventHandlerStart.get()){handlerEnded.countDown();releaseExecutionSlot(slotReleased);handlerExited(message.jobId());return null;}handlerStarted.set(true);}
+                try{handlers.get(message.type()).execute(message);return null;}finally{handlerEnded.countDown();releaseExecutionSlot(slotReleased);handlerExited(message.jobId());}
             });
             handlerOwnsExecutionSlot=true;
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(message.timeoutSeconds());
@@ -72,18 +72,18 @@ public class ExecutionConsumer {
                             boolean stopped=interruptAndAwait(running,handlerStarted,preventHandlerStart,handlerStartGate,handlerEnded,slotReleased);
                             String detail=stopped?"Execution stopped after cancellation request":"Handler ignored cancellation interruption; execution was marked cancelled and will not be retried automatically";
                             if(!stopped)log.atError().addKeyValue("jobId",message.jobId()).addKeyValue("executionId",message.executionId()).addKeyValue("workerId",runtime.id()).log("Handler did not stop during cancellation grace period");
-                            workflow.finish(message,runtime.id(),leaseToken,JobStatus.CANCELLED,false,detail);
+                            workflow.finish(message,runtime.id(),leaseToken,JobStatus.CANCELLED,false,detail,!stopped);
                             finished=true;
                         } else if(System.nanoTime()>=deadline) {
                             boolean stopped=interruptAndAwait(running,handlerStarted,preventHandlerStart,handlerStartGate,handlerEnded,slotReleased);
                             String detail=stopped?"Execution exceeded timeout of "+message.timeoutSeconds()+" seconds":"Handler ignored timeout interruption; execution was marked terminal and will not be retried automatically. Isolate this handler in a process to guarantee termination.";
                             if(!stopped)log.atError().addKeyValue("jobId",message.jobId()).addKeyValue("executionId",message.executionId()).addKeyValue("workerId",runtime.id()).log("Handler did not stop during timeout grace period; disabling automatic retry for this run");
-                            workflow.finish(message,runtime.id(),leaseToken,JobStatus.TIMEOUT,stopped,detail);
+                            workflow.finish(message,runtime.id(),leaseToken,JobStatus.TIMEOUT,stopped,detail,!stopped);
                             finished=true;
                         }
                     } catch(ExecutionException e) {
-                        Throwable cause=e.getCause();boolean permanent=cause instanceof IllegalArgumentException;
-                        workflow.finish(message,runtime.id(),leaseToken,JobStatus.FAILED,!permanent,cause.getMessage());
+                        Throwable cause=e.getCause();boolean retryable=isRetryable(cause);
+                        workflow.finish(message,runtime.id(),leaseToken,JobStatus.FAILED,retryable,cause.getMessage());
                         finished=true;
                     }
                 }
@@ -131,6 +131,12 @@ public class ExecutionConsumer {
         try{JobPriority.valueOf(message.priority());return true;}catch(IllegalArgumentException invalidPriority){return false;}
     }
 
+    private static boolean isRetryable(Throwable failure){
+        if(failure instanceof RetryableJobException)return true;
+        if(failure instanceof PermanentJobException||failure instanceof IllegalArgumentException)return false;
+        return true;
+    }
+
     private boolean interruptAndAwait(Future<?> running,java.util.concurrent.atomic.AtomicBoolean handlerStarted,java.util.concurrent.atomic.AtomicBoolean preventHandlerStart,Object handlerStartGate,CountDownLatch handlerEnded,java.util.concurrent.atomic.AtomicBoolean slotReleased)throws InterruptedException{
         synchronized(handlerStartGate){
             if(!handlerStarted.get()){preventHandlerStart.set(true);running.cancel(true);releaseExecutionSlot(slotReleased);return true;}
@@ -140,6 +146,11 @@ public class ExecutionConsumer {
     }
 
     private void releaseExecutionSlot(java.util.concurrent.atomic.AtomicBoolean released){if(released.compareAndSet(false,true))executionSlot.release();}
+
+    private void handlerExited(Long jobId){
+        try{runtime.handlerExited(jobId);}
+        catch(RuntimeException failure){log.atWarn().setCause(failure).addKeyValue("jobId",jobId).addKeyValue("workerId",runtime.id()).log("Could not clear worker assignment after handler exit");}
+    }
 
     @PreDestroy public void shutdown(){executionPool.shutdownNow();}
 }

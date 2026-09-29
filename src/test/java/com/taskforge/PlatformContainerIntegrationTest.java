@@ -26,7 +26,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.kafka.KafkaContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 import java.time.Instant;
@@ -46,17 +45,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class PlatformContainerIntegrationTest {
     private static ConfigurableApplicationContext contextToClose;
-    @Container static final PostgreSQLContainer<?> postgres=new PostgreSQLContainer<>("postgres:17-alpine");
-    @Container static final GenericContainer<?> redis=new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
-    @Container static final KafkaContainer kafka=new KafkaContainer(DockerImageName.parse("apache/kafka-native:3.8.0"));
+    // These containers are started by DynamicPropertySource below. Keeping them
+    // out of JUnit's @Container lifecycle avoids the extension stopping them
+    // while Spring is still resolving lazy property suppliers.
+    static final PostgreSQLContainer<?> postgres=new PostgreSQLContainer<>("postgres:17-alpine");
+    static final GenericContainer<?> redis=new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
+    static final KafkaContainer kafka=new KafkaContainer(DockerImageName.parse("apache/kafka-native:3.8.0"));
 
     @DynamicPropertySource static void infrastructure(DynamicPropertyRegistry properties){
-        // Spring may resolve dynamic properties while preparing the test instance,
-        // before the Testcontainers JUnit extension reaches its beforeAll callback.
-        // Start them here so mapped ports are available during ApplicationContext startup.
-        postgres.start();
-        redis.start();
-        kafka.start();
+        // Spring may resolve @DynamicPropertySource before the Testcontainers
+        // extension's before-all callback. Start here so mapped ports are available
+        // when Spring evaluates the suppliers below.
+        if(!postgres.isRunning())postgres.start();
+        if(!redis.isRunning())redis.start();
+        if(!kafka.isRunning())kafka.start();
         properties.add("spring.datasource.url",postgres::getJdbcUrl);
         properties.add("spring.datasource.username",postgres::getUsername);
         properties.add("spring.datasource.password",postgres::getPassword);
@@ -82,7 +84,12 @@ class PlatformContainerIntegrationTest {
     @Autowired MockMvc mockMvc;
 
     @BeforeEach void rememberContextForOrderedShutdown(){contextToClose=applicationContext;}
-    @AfterAll static void closeApplicationContextBeforeContainersStop(){if(contextToClose!=null)contextToClose.close();}
+    @AfterAll static void closeApplicationContextBeforeContainersStop(){
+        if(contextToClose!=null)contextToClose.close();
+        if(kafka.isRunning())kafka.stop();
+        if(redis.isRunning())redis.stop();
+        if(postgres.isRunning())postgres.stop();
+    }
 
     @Test void outboxDeliveryWorkerExecutionAndDuplicateKafkaDeliveryAreDurable() throws Exception {
         mockMvc.perform(get("/actuator/health/readiness")).andExpect(status().isOk());

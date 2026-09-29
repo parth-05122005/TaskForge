@@ -2,6 +2,7 @@ package com.taskforge.common;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.web.cors.CorsConfiguration;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -25,5 +26,23 @@ class SecurityConfigTest {
     @Test void emptyAllowlistDeniesCrossOriginRequestsAndWildcardIsRejected(){
         assertNull(forApi("").checkOrigin("https://console.example.com"));
         assertThrows(IllegalArgumentException.class,()->forApi("*"));
+    }
+
+    @Test void dashboardGetsRestrictiveBrowserPolicyWithoutChangingSwaggerPolicy(){
+        var writer=new SecurityConfig().dashboardPageSecurityHeaders();
+        MockHttpServletRequest dashboard=new MockHttpServletRequest();dashboard.setRequestURI("/");
+        MockHttpServletResponse dashboardResponse=new MockHttpServletResponse();
+
+        writer.writeHeaders(dashboard,dashboardResponse);
+
+        assertTrue(dashboardResponse.getHeader("Content-Security-Policy").toString().contains("script-src 'self'"));
+        assertTrue(dashboardResponse.getHeader("Content-Security-Policy").toString().contains("frame-ancestors 'none'"));
+        assertEquals("strict-origin-when-cross-origin",dashboardResponse.getHeader("Referrer-Policy"));
+        assertEquals("camera=(), microphone=(), geolocation=()",dashboardResponse.getHeader("Permissions-Policy"));
+
+        MockHttpServletRequest swagger=new MockHttpServletRequest();swagger.setRequestURI("/swagger-ui.html");
+        MockHttpServletResponse swaggerResponse=new MockHttpServletResponse();
+        writer.writeHeaders(swagger,swaggerResponse);
+        assertNull(swaggerResponse.getHeader("Content-Security-Policy"));
     }
 }

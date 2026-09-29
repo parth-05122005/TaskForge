@@ -69,6 +69,19 @@ class ExecutionWorkflowServiceTest {
         verify(outbox).save(argThat(o->o.getTopic().equals("taskforge.jobs.dlq")));
     }
 
+    @Test void nonCooperativeHandlerKeepsWorkerBusyUntilItsThreadExits(){
+        Job running=job(JobStatus.RUNNING,0);JobExecution execution=execution(running,"lease");
+        Worker worker=spy(new Worker("worker-1","host"));worker.assign(11L);
+        when(jobs.findById(11L)).thenReturn(Optional.of(running));when(jobs.findByIdForUpdate(11L)).thenReturn(Optional.of(running));
+        when(executions.findByIdForUpdate(22L)).thenReturn(Optional.of(execution));when(workers.findById("worker-1")).thenReturn(Optional.of(worker));
+
+        assertTrue(service.finish(message(1),"worker-1","lease",JobStatus.TIMEOUT,false,"handler ignored interruption",true));
+
+        assertEquals(WorkerStatus.BUSY,worker.getStatus());
+        assertEquals(11L,worker.getCurrentJobId());
+        verify(worker,never()).idle();
+    }
+
     @Test void staleLeaseCannotOverwriteRecoveredExecution(){
         Job running=job(JobStatus.RUNNING,2);JobExecution execution=execution(running,"new-token");
         when(jobs.findById(11L)).thenReturn(Optional.of(running));when(jobs.findByIdForUpdate(11L)).thenReturn(Optional.of(running));when(executions.findByIdForUpdate(22L)).thenReturn(Optional.of(execution));

@@ -9,6 +9,7 @@ import java.time.Instant;import java.util.*;
 
 @Service
 public class DashboardService {
+    private static final long EVENT_CURSOR_OVERLAP_SECONDS=120;
     private final JobRepository jobs;private final JobEventRepository events;private final WorkerRepository workers;private final UserRepository users;
     public DashboardService(JobRepository jobs,JobEventRepository events,WorkerRepository workers,UserRepository users){this.jobs=jobs;this.events=events;this.workers=workers;this.users=users;}
     public List<EventView> events(String email,boolean admin,Instant since,Long afterId){
@@ -32,7 +33,7 @@ public class DashboardService {
     private List<EventView> loadEvents(Long ownerId,boolean admin,Instant since,Long afterId){
         var recent=since==null?Instant.now().minusSeconds(3600):since;
         var page=afterId!=null
-                ?(admin?events.findTop200ByIdGreaterThanOrderByIdAsc(afterId):events.findAfterIdForOwner(ownerId,afterId,PageRequest.of(0,200)))
+                ?(admin?events.findAfterCursorOrRecent(afterId,Instant.now().minusSeconds(EVENT_CURSOR_OVERLAP_SECONDS),PageRequest.of(0,200)):events.findAfterCursorOrRecentForOwner(ownerId,afterId,Instant.now().minusSeconds(EVENT_CURSOR_OVERLAP_SECONDS),PageRequest.of(0,200)))
                 :(admin?events.findTop200ByCreatedAtGreaterThanEqualOrderByIdAsc(recent):events.findRecentForOwner(ownerId,recent,PageRequest.of(0,200)));
         return page.stream().map(EventView::of).toList();
     }

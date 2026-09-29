@@ -30,5 +30,10 @@ jobs:
           cache: maven
       - name: Run tests and package
         run: mvn --batch-mode --no-transfer-progress verify
+      - name: Validate Compose configuration
+        env:
+          DB_PASSWORD: ci-validation-password
+          JWT_SECRET: ci-validation-jwt-secret-with-at-least-thirty-two-bytes
+        run: docker compose config --quiet
       - name: Build application image
         run: docker build --pull --tag taskforge:ci .

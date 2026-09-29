@@ -26,8 +26,12 @@ class DemoHandlersTest {
         assertThrows(IllegalArgumentException.class,()->handlers.get("EMAIL_NOTIFICATION").execute(message("{\"to\":\"\"}")));
         assertThrows(IllegalArgumentException.class,()->handlers.get("HTTP_REQUEST").execute(message("{\"url\":\"file:///etc/passwd\"}")));
         assertThrows(IllegalStateException.class,()->handlers.get("DEMO_FAIL").execute(message("{\"fail\":true}")));
+        assertThrows(RetryableJobException.class,()->handlers.get("DEMO_FAIL").execute(message("{\"failAttempts\":2}",2)));
+        assertDoesNotThrow(()->handlers.get("DEMO_FAIL").execute(message("{\"failAttempts\":2}",3)));
+        assertThrows(IllegalArgumentException.class,()->handlers.get("DEMO_FAIL").execute(message("{\"failAttempts\":21}",1)));
         assertDoesNotThrow(()->handlers.get("DEMO_LONG_RUNNING_TASK").execute(message("{\"durationMs\":0}")));
     }
 
-    private static JobMessage message(String payload){return new JobMessage(1L,2L,1,"REPORT",payload,"MEDIUM",1,30);}
+    private static JobMessage message(String payload){return message(payload,1);}
+    private static JobMessage message(String payload,int attempt){return new JobMessage(1L,2L,1,"REPORT",payload,"MEDIUM",attempt,30);}
 }

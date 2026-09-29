@@ -4,4 +4,5 @@ public record JobMessage(Long jobId,Long executionId,int runNumber,String type,S
  public static final int MAX_RETRIES=20;
  public static final int MAX_ATTEMPTS=MAX_RETRIES+1;
  public static final int MAX_TIMEOUT_SECONDS=86_400;
+ public static final int MAX_PAYLOAD_BYTES=262_144;
 }

@@ -17,12 +17,15 @@ class DashboardServiceTest {
         JobRepository jobs=mock(JobRepository.class);JobEventRepository events=mock(JobEventRepository.class);WorkerRepository workers=mock(WorkerRepository.class);UserRepository users=mock(UserRepository.class);
         User owner=mock(User.class);when(owner.getId()).thenReturn(42L);when(users.findByEmail("owner@example.com")).thenReturn(Optional.of(owner));
         JobEvent event=mock(JobEvent.class);when(event.getId()).thenReturn(92L);
-        when(events.findAfterIdForOwner(eq(42L),eq(91L),any())).thenReturn(List.of(event));
+        when(events.findAfterCursorOrRecentForOwner(eq(42L),eq(91L),any(),any())).thenReturn(List.of(event));
 
         List<EventView> result=new DashboardService(jobs,events,workers,users).events("owner@example.com",false,null,91L);
 
         assertEquals(1,result.size());assertEquals(92L,result.get(0).id());
-        verify(events).findAfterIdForOwner(eq(42L),eq(91L),any());
+        var cursorQuery=org.mockito.ArgumentCaptor.forClass(java.time.Instant.class);
+        verify(events).findAfterCursorOrRecentForOwner(eq(42L),eq(91L),cursorQuery.capture(),any());
+        assertTrue(java.time.Duration.between(cursorQuery.getValue(),java.time.Instant.now()).toSeconds()>=119);
+        assertTrue(java.time.Duration.between(cursorQuery.getValue(),java.time.Instant.now()).toSeconds()<=121);
         verify(events,never()).findTop200ByIdGreaterThanOrderByIdAsc(anyLong());
         verifyNoInteractions(jobs,workers);
     }
@@ -30,11 +33,11 @@ class DashboardServiceTest {
     @Test void ownerIncrementalFeedUsesEventIdCursorAndOwnerScope(){
         JobRepository jobs=mock(JobRepository.class);JobEventRepository events=mock(JobEventRepository.class);WorkerRepository workers=mock(WorkerRepository.class);UserRepository users=mock(UserRepository.class);
         User owner=mock(User.class);when(owner.getId()).thenReturn(42L);when(users.findByEmail("owner@example.com")).thenReturn(Optional.of(owner));
-        when(jobs.findByOwnerId(eq(42L),any())).thenReturn(Page.empty());when(events.findAfterIdForOwner(eq(42L),eq(91L),any())).thenReturn(List.of());
+        when(jobs.findByOwnerId(eq(42L),any())).thenReturn(Page.empty());when(events.findAfterCursorOrRecentForOwner(eq(42L),eq(91L),any(),any())).thenReturn(List.of());
 
         DashboardSnapshot snapshot=new DashboardService(jobs,events,workers,users).snapshot("owner@example.com",false,null,91L);
 
-        assertFalse(snapshot.admin());assertTrue(snapshot.workers().isEmpty());verify(events).findAfterIdForOwner(eq(42L),eq(91L),any());verify(events,never()).findTop200ByIdGreaterThanOrderByIdAsc(anyLong());verifyNoInteractions(workers);
+        assertFalse(snapshot.admin());assertTrue(snapshot.workers().isEmpty());verify(events).findAfterCursorOrRecentForOwner(eq(42L),eq(91L),any(),any());verify(events,never()).findTop200ByIdGreaterThanOrderByIdAsc(anyLong());verifyNoInteractions(workers);
         verify(jobs).countGroupedByOwnerStatus(42L);verify(jobs,never()).countByOwnerAndStatus(anyLong(),any());
         assertEquals(0L,snapshot.counts().get(JobStatus.SUCCESS.name()));
     }

@@ -11,13 +11,24 @@ let historyJob = null;
 let workerPage = 0;
 const workerPageSize = 25;
 
+class StaleSessionResponse extends Error {}
+
 function setAuthState() {
   const signedIn = !!sessionStorage.getItem(tokenKey);
+  clearPrivateDashboard();
   $("#auth").classList.toggle("hidden", signedIn);
   $("#app").classList.toggle("hidden", !signedIn);
   $("#logout").classList.toggle("hidden", !signedIn);
-  if (signedIn) { refresh(); refreshEvents(); timer ||= setInterval(refresh, 5000); eventTimer ||= setInterval(refreshEvents, 1500); }
+  if (signedIn) { $("#connection").textContent = "Connecting…"; $("#event-connection").textContent = "Loading events…"; refresh(); refreshEvents(); timer ||= setInterval(refresh, 5000); eventTimer ||= setInterval(refreshEvents, 1500); }
   else { clearInterval(timer); clearInterval(eventTimer); timer = null; eventTimer = null; $("#connection").textContent = "Signed out"; }
+}
+
+function clearPrivateDashboard() {
+  ["#metrics", "#jobs", "#workers", "#worker-pagination", "#events", "#execution-list", "#history-pagination"].forEach((selector) => $(selector).replaceChildren());
+  $("#job-count").textContent = "0 shown";
+  $("#worker-count").textContent = "0 total";
+  $("#worker-panel").classList.add("hidden");
+  $("#job-detail").close();
 }
 
 async function api(path, options = {}) {
@@ -25,7 +36,15 @@ async function api(path, options = {}) {
   const token = sessionStorage.getItem(tokenKey);
   if (token) headers.Authorization = `Bearer ${token}`;
   const response = await fetch(path, { ...options, headers });
-  if (response.status === 401) { sessionStorage.removeItem(tokenKey); resetEventCursor(); setAuthState(); throw new Error("Session expired. Sign in again."); }
+  if (response.status === 401) {
+    if (path.startsWith("/api/auth/")) {
+      const body=await response.json().catch(()=>({}));
+      throw new Error(body.message || "Invalid credentials.");
+    }
+    if (sessionStorage.getItem(tokenKey) !== token) throw new StaleSessionResponse();
+    if (token) { sessionStorage.removeItem(tokenKey); resetEventCursor(); setAuthState(); }
+    throw new Error("Session expired. Sign in again.");
+  }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.message || `Request failed (${response.status})`);
   return body;
@@ -37,7 +56,7 @@ async function authenticate(register) {
   try {
     const result = await api(path, { method: "POST", body: JSON.stringify({ email: form.get("email"), password: form.get("password") }) });
     sessionStorage.setItem(tokenKey, result.accessToken); $("#auth-error").textContent = ""; setAuthState();
-  } catch (error) { $("#auth-error").textContent = error.message; }
+  } catch (error) { if (!(error instanceof StaleSessionResponse)) $("#auth-error").textContent = error.message; }
 }
 
 function node(tag, text, className) { const element = document.createElement(tag); if (text != null) element.textContent = text; if (className) element.className = className; return element; }
@@ -47,12 +66,15 @@ function render(snapshot) {
   $("#connection").className = "pill good";
   $("#worker-panel").classList.toggle("hidden", !snapshot.admin);
   const metrics = $("#metrics"); metrics.replaceChildren();
-  ["SCHEDULED", "QUEUED", "RUNNING", "RETRYING", "SUCCESS", "FAILED"].forEach((status) => {
-    const box = node("div", null, "metric"); box.append(node("span", status.replaceAll("_", " "))); box.append(node("strong", String(snapshot.counts[status] || 0))); metrics.append(box);
+  const totalJobs=Object.values(snapshot.counts).reduce((sum,count)=>sum+count,0);
+  [["TOTAL",totalJobs],...["CREATED","SCHEDULED","QUEUED","RUNNING","RETRYING","SUCCESS","FAILED","TIMEOUT","CANCELLED"].map((status)=>[status,snapshot.counts[status]||0])].forEach(([status,count]) => {
+    const box = node("div", null, "metric"); box.append(node("span", status.replaceAll("_", " "))); box.append(node("strong", String(count))); metrics.append(box);
   });
   const tbody = $("#jobs"); tbody.replaceChildren();
   $("#job-count").textContent = `${snapshot.jobs.length} shown`;
-  if (!snapshot.jobs.length) tbody.append(Object.assign(document.createElement("tr"), { innerHTML: '<td colspan="6" class="empty">No jobs yet. Create a demo job below.</td>' }));
+  if (!snapshot.jobs.length) {
+    const emptyRow=document.createElement("tr");const emptyCell=node("td","No jobs yet. Create a demo job below.","empty");emptyCell.colSpan=6;emptyRow.append(emptyCell);tbody.append(emptyRow);
+  }
   snapshot.jobs.forEach((job) => {
     const row = document.createElement("tr");
     const name = node("td"); const detailLink=node("button",`${job.name} · #${job.id}`,"button ghost small");detailLink.onclick=()=>showHistory(job);name.append(detailLink);
@@ -105,7 +127,7 @@ async function refresh() {
   const eventQuery = eventCursor ? `afterId=${eventCursor}` : `since=${encodeURIComponent(initialSince)}`;
   const query = `${eventQuery}&workerPage=${workerPage}&workerSize=${workerPageSize}`;
   try { const data = await api(`/api/dashboard/snapshot?${query}`); if(sessionStorage.getItem(tokenKey)===currentToken&&data.workerPage===workerPage)render(data); }
-  catch (error) { $("#connection").textContent = "API unavailable"; $("#connection").className = "pill warn"; console.error(error); }
+  catch (error) { if (!(error instanceof StaleSessionResponse) && sessionStorage.getItem(tokenKey)===currentToken) { $("#connection").textContent = "API unavailable"; $("#connection").className = "pill warn"; console.error(error); } }
   finally { refreshing = false;if(refreshPending){refreshPending=false;refresh();} }
 }
 
@@ -134,7 +156,7 @@ async function refreshEvents() {
 
 async function cancelJob(id) {
   try { await api(`/api/jobs/${id}/cancel`, { method: "POST" }); await refresh(); }
-  catch (error) { alert(error.message); }
+  catch (error) { if (!(error instanceof StaleSessionResponse)) alert(error.message); }
 }
 
 async function showHistory(job, page = 0) {
@@ -150,7 +172,7 @@ async function showHistory(job, page = 0) {
     pagination.append(previous,node("span",`Page ${history.number+1} of ${Math.max(history.totalPages,1)}`),next);
     $("#job-detail").showModal();
   }
-  catch(error){list.append(node("p",error.message,"error"));$("#job-detail").showModal();}
+  catch(error){if(!(error instanceof StaleSessionResponse)&&sessionStorage.getItem(tokenKey)) {list.append(node("p",error.message,"error"));$("#job-detail").showModal();}}
 }
 
 $("#auth-form").addEventListener("submit", (event) => { event.preventDefault(); authenticate(false); });
@@ -173,6 +195,6 @@ $("#job-form").addEventListener("submit", async (event) => {
     if (scheduleType === "ONE_TIME" && runAt) body.runAt = new Date(runAt).toISOString();
     if (scheduleType === "CRON") { body.cronExpression = form.get("cronExpression"); body.timeZone = form.get("timeZone"); }
     await api("/api/jobs", { method: "POST", body: JSON.stringify(body) }); await refresh();
-  } catch (error) { $("#job-error").textContent = error.message; }
+  } catch (error) { if (!(error instanceof StaleSessionResponse)) $("#job-error").textContent = error.message; }
 });
 setAuthState();

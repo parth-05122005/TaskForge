@@ -6,6 +6,7 @@ import java.time.Instant;import java.util.List;
 public interface WorkerRepository extends JpaRepository<Worker,String>{
  interface StatusCount {WorkerStatus getStatus();long getTotal();}
  long countByStatus(WorkerStatus status);
+ boolean existsByCurrentJobIdAndStatus(Long currentJobId,WorkerStatus status);
  @org.springframework.data.jpa.repository.Query("select w.status as status,count(w) as total from Worker w group by w.status") List<StatusCount> countGroupedByStatus();
  Page<Worker> findAllByOrderByLastHeartbeatDesc(Pageable pageable);
  Page<Worker> findByStatusOrderByLastHeartbeatDesc(WorkerStatus status,Pageable pageable);

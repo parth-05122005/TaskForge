@@ -12,10 +12,12 @@ import java.time.Instant;
 @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name="taskforge.role",havingValue="api",matchIfMissing=true)
 public class LeaseRecovery {
     private static final org.slf4j.Logger log=org.slf4j.LoggerFactory.getLogger(LeaseRecovery.class);
-    private final JobExecutionRepository executions;private final JobRepository jobs;private final WorkerRepository workers;private final JobEventService events;private final org.springframework.data.redis.core.StringRedisTemplate redis;private final OutboxRepository outbox;private final ObjectMapper mapper;private final com.taskforge.common.TaskForgeMetrics metrics;private final long retryBaseSeconds;private final long retryMaxSeconds;
-    public LeaseRecovery(JobExecutionRepository executions,JobRepository jobs,WorkerRepository workers,JobEventService events,org.springframework.data.redis.core.StringRedisTemplate redis,OutboxRepository outbox,ObjectMapper mapper,com.taskforge.common.TaskForgeMetrics metrics){this(executions,jobs,workers,events,redis,outbox,mapper,metrics,2,256);}
+    private final JobExecutionRepository executions;private final JobRepository jobs;private final WorkerRepository workers;private final JobEventService events;private final org.springframework.data.redis.core.StringRedisTemplate redis;private final OutboxRepository outbox;private final ObjectMapper mapper;private final com.taskforge.common.TaskForgeMetrics metrics;private final long retryBaseSeconds;private final long retryMaxSeconds;private final WorkerLivenessSettings liveness;
+    public LeaseRecovery(JobExecutionRepository executions,JobRepository jobs,WorkerRepository workers,JobEventService events,org.springframework.data.redis.core.StringRedisTemplate redis,OutboxRepository outbox,ObjectMapper mapper,com.taskforge.common.TaskForgeMetrics metrics){this(executions,jobs,workers,events,redis,outbox,mapper,metrics,2,256,new WorkerLivenessSettings(5_000,20));}
+    public LeaseRecovery(JobExecutionRepository executions,JobRepository jobs,WorkerRepository workers,JobEventService events,org.springframework.data.redis.core.StringRedisTemplate redis,OutboxRepository outbox,ObjectMapper mapper,com.taskforge.common.TaskForgeMetrics metrics,long retryBaseSeconds,long retryMaxSeconds){this(executions,jobs,workers,events,redis,outbox,mapper,metrics,retryBaseSeconds,retryMaxSeconds,new WorkerLivenessSettings(5_000,20));}
     @org.springframework.beans.factory.annotation.Autowired
-    public LeaseRecovery(JobExecutionRepository executions,JobRepository jobs,WorkerRepository workers,JobEventService events,org.springframework.data.redis.core.StringRedisTemplate redis,OutboxRepository outbox,ObjectMapper mapper,com.taskforge.common.TaskForgeMetrics metrics,@org.springframework.beans.factory.annotation.Value("${taskforge.retry.base-delay:2}") long retryBaseSeconds,@org.springframework.beans.factory.annotation.Value("${taskforge.retry.max-delay:256}") long retryMaxSeconds){if(retryBaseSeconds<1||retryMaxSeconds<retryBaseSeconds)throw new IllegalArgumentException("Retry delay settings must satisfy 1 <= base <= max");this.executions=executions;this.jobs=jobs;this.workers=workers;this.events=events;this.redis=redis;this.outbox=outbox;this.mapper=mapper;this.metrics=metrics;this.retryBaseSeconds=retryBaseSeconds;this.retryMaxSeconds=retryMaxSeconds;}
+    public LeaseRecovery(JobExecutionRepository executions,JobRepository jobs,WorkerRepository workers,JobEventService events,org.springframework.data.redis.core.StringRedisTemplate redis,OutboxRepository outbox,ObjectMapper mapper,com.taskforge.common.TaskForgeMetrics metrics,@org.springframework.beans.factory.annotation.Value("${taskforge.retry.base-delay:2}") long retryBaseSeconds,@org.springframework.beans.factory.annotation.Value("${taskforge.retry.max-delay:256}") long retryMaxSeconds,@org.springframework.beans.factory.annotation.Value("${taskforge.heartbeat-interval:5000}") long heartbeatIntervalMillis,@org.springframework.beans.factory.annotation.Value("${taskforge.worker-dead-after-seconds:20}") long workerDeadAfterSeconds){this(executions,jobs,workers,events,redis,outbox,mapper,metrics,retryBaseSeconds,retryMaxSeconds,new WorkerLivenessSettings(heartbeatIntervalMillis,workerDeadAfterSeconds));}
+    private LeaseRecovery(JobExecutionRepository executions,JobRepository jobs,WorkerRepository workers,JobEventService events,org.springframework.data.redis.core.StringRedisTemplate redis,OutboxRepository outbox,ObjectMapper mapper,com.taskforge.common.TaskForgeMetrics metrics,long retryBaseSeconds,long retryMaxSeconds,WorkerLivenessSettings liveness){if(retryBaseSeconds<1||retryMaxSeconds<retryBaseSeconds)throw new IllegalArgumentException("Retry delay settings must satisfy 1 <= base <= max");this.executions=executions;this.jobs=jobs;this.workers=workers;this.events=events;this.redis=redis;this.outbox=outbox;this.mapper=mapper;this.metrics=metrics;this.retryBaseSeconds=retryBaseSeconds;this.retryMaxSeconds=retryMaxSeconds;this.liveness=liveness;}
 
     @Scheduled(fixedDelayString="${taskforge.recovery-interval:5000}")
     @Transactional
@@ -37,7 +39,7 @@ public class LeaseRecovery {
             } else {
                 job.transition(JobStatus.FAILED);
             }
-            workers.findById(workerId).ifPresent(w->{if(java.util.Objects.equals(w.getCurrentJobId(),job.getId()))w.recovered();});
+            workers.findById(workerId).ifPresent(w->{if(java.util.Objects.equals(w.getCurrentJobId(),job.getId()))w.recovered(liveness.deadAfter());});
             JobStatus outcome=job.isCancellationRequested()?JobStatus.CANCELLED:(retry?JobStatus.RETRYING:(job.getScheduleType()==ScheduleType.CRON?JobStatus.SCHEDULED:JobStatus.FAILED));
             events.record(job.getId(),execution.getId(),outcome,workerId,"Worker lease expired; recovery applied");
             log.atWarn().addKeyValue("jobId",job.getId()).addKeyValue("executionId",execution.getId()).addKeyValue("workerId",workerId).addKeyValue("attempt",execution.getAttemptNumber()).addKeyValue("outcome",outcome).log("Expired worker lease recovered");
@@ -47,7 +49,7 @@ public class LeaseRecovery {
                 catch(JsonProcessingException e){throw new IllegalStateException("Unable to serialize recovered dead-letter event",e);}
             }
         }
-        Instant deadBefore=Instant.now().minusSeconds(20);
+        Instant deadBefore=Instant.now().minus(liveness.deadAfter());
         markDeadIfHeartbeatExpired(WorkerStatus.BUSY,deadBefore);
         markDeadIfHeartbeatExpired(WorkerStatus.ONLINE,deadBefore);
     }

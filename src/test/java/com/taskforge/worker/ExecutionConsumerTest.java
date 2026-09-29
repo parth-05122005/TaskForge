@@ -94,7 +94,7 @@ class ExecutionConsumerTest {
 
         try {
             consumer.receive("{\"jobId\":9,\"executionId\":99,\"runNumber\":1,\"type\":\"BLOCKING\",\"payload\":\"{}\",\"priority\":\"HIGH\",\"attempt\":1,\"timeoutSeconds\":5}",acknowledgment);
-            verify(workflow).finish(any(JobMessage.class),eq("worker-1"),eq("lease"),eq(JobStatus.CANCELLED),eq(false),contains("cancellation"));
+            verify(workflow).finish(any(JobMessage.class),eq("worker-1"),eq("lease"),eq(JobStatus.CANCELLED),eq(false),contains("cancellation"),eq(false));
             verify(acknowledgment).acknowledge();
         } finally {consumer.shutdown();}
     }
@@ -111,7 +111,7 @@ class ExecutionConsumerTest {
 
         try {
             consumer.receive("{\"jobId\":9,\"executionId\":99,\"runNumber\":1,\"type\":\"BLOCKING\",\"payload\":\"{}\",\"priority\":\"HIGH\",\"attempt\":1,\"timeoutSeconds\":1}",acknowledgment);
-            verify(workflow).finish(any(JobMessage.class),eq("worker-1"),eq("lease"),eq(JobStatus.TIMEOUT),eq(true),contains("timeout"));
+            verify(workflow).finish(any(JobMessage.class),eq("worker-1"),eq("lease"),eq(JobStatus.TIMEOUT),eq(true),contains("timeout"),eq(false));
             verify(acknowledgment).acknowledge();
         } finally {consumer.shutdown();}
     }
@@ -131,12 +131,36 @@ class ExecutionConsumerTest {
         try {
             consumer.receive("{\"jobId\":9,\"executionId\":99,\"runNumber\":1,\"type\":\"NON_COOPERATIVE\",\"payload\":\"{}\",\"priority\":\"HIGH\",\"attempt\":1,\"timeoutSeconds\":1}",acknowledgment);
             var ordered=inOrder(workflow,acknowledgment);
-            ordered.verify(workflow).finish(any(JobMessage.class),eq("worker-1"),eq("lease"),eq(JobStatus.TIMEOUT),eq(false),contains("ignored timeout interruption"));
+            ordered.verify(workflow).finish(any(JobMessage.class),eq("worker-1"),eq("lease"),eq(JobStatus.TIMEOUT),eq(false),contains("ignored timeout interruption"),eq(true));
             ordered.verify(acknowledgment).acknowledge();
             consumer.receive("{\"jobId\":10,\"executionId\":100,\"runNumber\":1,\"type\":\"NON_COOPERATIVE\",\"payload\":\"{}\",\"priority\":\"HIGH\",\"attempt\":1,\"timeoutSeconds\":1}",secondAcknowledgment);
             verify(workflow,never()).claim(argThat(message->message.jobId().equals(10L)),anyString());
             verify(secondAcknowledgment).nack(Duration.ofSeconds(1));
+            releaseHandler.countDown();
+            verify(runtime,timeout(1000)).handlerExited(9L);
         } finally {releaseHandler.countDown();consumer.shutdown();}
+    }
+
+    @Test void handlerFailureTypesControlWhetherTheAttemptCanRetry() throws Exception {
+        assertHandlerFailurePolicy(new PermanentJobException("invalid account"),false);
+        assertHandlerFailurePolicy(new RetryableJobException("temporary service outage"),true);
+        assertHandlerFailurePolicy(new IllegalArgumentException("invalid payload"),false);
+    }
+
+    private static void assertHandlerFailurePolicy(RuntimeException failure,boolean retryable) throws Exception {
+        ExecutionWorkflowService workflow=mock(ExecutionWorkflowService.class);
+        when(workflow.claim(any(JobMessage.class),eq("worker-1"))).thenReturn("lease");
+        WorkerRuntime runtime=mock(WorkerRuntime.class);when(runtime.id()).thenReturn("worker-1");
+        StringRedisTemplate redis=mock(StringRedisTemplate.class);
+        ValueOperations<String,String> values=mock(ValueOperations.class);when(redis.opsForValue()).thenReturn(values);when(values.setIfAbsent(anyString(),anyString(),any(Duration.class))).thenReturn(true);
+        JobHandler handler=new JobHandler(){public String type(){return "POLICY_TEST";}public void execute(JobMessage ignored){throw failure;}};
+        ExecutionConsumer consumer=new ExecutionConsumer(redis,new DemoHandlers(java.util.List.of(handler)),runtime,workflow,new ObjectMapper());
+        Acknowledgment acknowledgment=mock(Acknowledgment.class);
+        try {
+            consumer.receive("{\"jobId\":9,\"executionId\":99,\"runNumber\":1,\"type\":\"POLICY_TEST\",\"payload\":\"{}\",\"priority\":\"HIGH\",\"attempt\":1,\"timeoutSeconds\":5}",acknowledgment);
+            verify(workflow).finish(any(JobMessage.class),eq("worker-1"),eq("lease"),eq(JobStatus.FAILED),eq(retryable),eq(failure.getMessage()));
+            verify(acknowledgment).acknowledge();
+        } finally {consumer.shutdown();}
     }
 
     private static JobHandler blockingHandler(String type){return new JobHandler(){public String type(){return type;}public void execute(JobMessage ignored)throws InterruptedException{Thread.sleep(10_000);}};}

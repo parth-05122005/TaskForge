@@ -46,6 +46,7 @@ taskforge:
   outbox-retention-interval: ${TASKFORGE_OUTBOX_RETENTION_INTERVAL:21600000}
   outbox-retention-initial-delay: ${TASKFORGE_OUTBOX_RETENTION_INITIAL_DELAY:60000}
   heartbeat-interval: ${TASKFORGE_HEARTBEAT_INTERVAL:5000}
+  worker-dead-after-seconds: ${TASKFORGE_WORKER_DEAD_AFTER_SECONDS:20}
   recovery-interval: ${TASKFORGE_RECOVERY_INTERVAL:5000}
   retry:
     base-delay: ${TASKFORGE_RETRY_BASE_DELAY:2}

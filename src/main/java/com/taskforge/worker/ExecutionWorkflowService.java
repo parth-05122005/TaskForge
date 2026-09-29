@@ -36,6 +36,11 @@ public class ExecutionWorkflowService {
 
     @Transactional
     public boolean finish(JobMessage message,String workerId,String leaseToken,JobStatus executionResult,boolean retryable,String error){
+        return finish(message,workerId,leaseToken,executionResult,retryable,error,false);
+    }
+
+    @Transactional
+    public boolean finish(JobMessage message,String workerId,String leaseToken,JobStatus executionResult,boolean retryable,String error,boolean handlerStillRunning){
         JobExecution execution=executions.findByIdForUpdate(message.executionId()).orElseThrow();
         Job job=jobs.findByIdForUpdate(message.jobId()).orElseThrow();
         if(execution.getStatus()!=JobStatus.RUNNING||!leaseToken.equals(execution.getLeaseToken())||execution.getLeaseUntil().isBefore(Instant.now()))return false;
@@ -62,7 +67,7 @@ public class ExecutionWorkflowService {
             job.transition(JobStatus.FAILED);
         } else if(job.getScheduleType()==ScheduleType.CRON){job.setNextRunAt(job.nextCronRunAfter(Instant.now()));job.transition(JobStatus.SCHEDULED);}
         else job.transition(JobStatus.FAILED);
-        worker.idle();
+        if(!handlerStillRunning)worker.idle();
         String detail=error==null?(success?"Execution completed":"Execution failed"):error;
         events.record(job.getId(),execution.getId(),executionResult,workerId,detail);
         if(job.getStatus()!=executionResult)events.record(job.getId(),execution.getId(),job.getStatus(),workerId,"Job state changed after attempt");
