@@ -44,6 +44,17 @@ class JobRepositoryConcurrencyTest {
         assertTrue(outbox.existsById(pending.getId()));
     }
 
+    @Test void deleteLockQueryLocksExecutionHistoryInStableOrder(){
+        User owner=users.save(new User("delete-lock-order@example.com","hash"));
+        Job job=jobs.save(new Job(owner,"delete lock order",null,"REPORT","{}",ScheduleType.IMMEDIATE,null,Instant.now(),JobPriority.MEDIUM,1,30));
+        JobExecution first=executions.saveAndFlush(new JobExecution(job,1));
+        JobExecution second=executions.saveAndFlush(new JobExecution(job,2));
+
+        var locked=executions.lockAllByJobId(job.getId());
+
+        assertEquals(java.util.List.of(first.getId(),second.getId()),locked.stream().map(JobExecution::getId).toList());
+    }
+
     @Test @org.springframework.transaction.annotation.Transactional(propagation=org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void concurrentSchedulersDoNotClaimTheSameDueJob() throws Exception {
         User owner=users.save(new User("concurrency@example.com","hash"));
