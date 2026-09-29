@@ -36,7 +36,7 @@ public class ExecutionConsumer {
         JobMessage message;
         try {message=mapper.readValue(payload,JobMessage.class);}
         catch(JsonProcessingException malformed){deadLetterMalformed(payload,acknowledgment,"malformed JSON: "+malformed.getOriginalMessage());return;}
-        if(message.jobId()==null||message.executionId()==null||message.runNumber()<0||message.type()==null||message.type().isBlank()||message.payload()==null||message.attempt()<1||message.timeoutSeconds()<1){deadLetterMalformed(payload,acknowledgment,"missing or invalid required execution fields");return;}
+        if(!hasValidExecutionFields(message)){deadLetterMalformed(payload,acknowledgment,"missing or out-of-range required execution fields");return;}
         String key="taskforge:lock:job:"+message.jobId(),token=UUID.randomUUID().toString();
         boolean redisAvailable=true;
         boolean locked=false;
@@ -118,6 +118,11 @@ public class ExecutionConsumer {
     private static String poisonKey(String payload){
         try{return "poison-"+HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest((payload==null?"<null>":payload).getBytes(StandardCharsets.UTF_8)));}
         catch(NoSuchAlgorithmException impossible){throw new IllegalStateException("SHA-256 is required by the Java runtime",impossible);}
+    }
+
+    private static boolean hasValidExecutionFields(JobMessage message){
+        if(message.jobId()==null||message.jobId()<1||message.executionId()==null||message.executionId()<1||message.runNumber()<1||message.type()==null||message.type().isBlank()||message.type().length()>JobMessage.MAX_JOB_TYPE_LENGTH||message.payload()==null||message.attempt()<1||message.attempt()>JobMessage.MAX_ATTEMPTS||message.timeoutSeconds()<1||message.timeoutSeconds()>JobMessage.MAX_TIMEOUT_SECONDS||message.priority()==null)return false;
+        try{JobPriority.valueOf(message.priority());return true;}catch(IllegalArgumentException invalidPriority){return false;}
     }
 
     private boolean interruptAndAwait(Future<?> running,java.util.concurrent.atomic.AtomicBoolean handlerStarted,java.util.concurrent.atomic.AtomicBoolean preventHandlerStart,Object handlerStartGate,CountDownLatch handlerEnded)throws InterruptedException{

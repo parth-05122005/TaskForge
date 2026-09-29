@@ -65,6 +65,22 @@ class ExecutionConsumerTest {
         } finally {consumer.shutdown();}
     }
 
+    @Test void timeoutBeyondSupportedLimitIsDeadLetteredBeforeClaiming() throws Exception {
+        WorkerRuntime runtime=mock(WorkerRuntime.class);when(runtime.id()).thenReturn("worker-1");
+        KafkaTemplate<String,String> kafka=mock(KafkaTemplate.class);
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(java.util.concurrent.CompletableFuture.completedFuture(null));
+        ExecutionWorkflowService workflow=mock(ExecutionWorkflowService.class);
+        ExecutionConsumer consumer=new ExecutionConsumer(mock(StringRedisTemplate.class),new DemoHandlers(java.util.List.of()),runtime,workflow,new ObjectMapper(),kafka,5);
+        Acknowledgment acknowledgment=mock(Acknowledgment.class);
+        String payload="{\"jobId\":9,\"executionId\":99,\"runNumber\":1,\"type\":\"REPORT\",\"payload\":\"{}\",\"priority\":\"HIGH\",\"attempt\":1,\"timeoutSeconds\":86401}";
+        try {
+            consumer.receive(payload,acknowledgment);
+            verify(workflow,never()).claim(any(JobMessage.class),anyString());
+            verify(kafka).send(any(ProducerRecord.class));
+            verify(acknowledgment).acknowledge();
+        } finally {consumer.shutdown();}
+    }
+
     @Test void durableCancellationRequestInterruptsCooperativeHandlerAndAcknowledgesAfterFinish() throws Exception {
         ExecutionWorkflowService workflow=mock(ExecutionWorkflowService.class);
         when(workflow.claim(any(JobMessage.class),eq("worker-1"))).thenReturn("lease");
