@@ -103,7 +103,7 @@ Requirements: Docker Desktop, Java 21+, and Maven 3.9+.
 docker compose up --build
 ```
 
-Open the dashboard at `http://localhost:8080/`, Swagger at `http://localhost:8080/swagger-ui.html`, and health at `http://localhost:8080/actuator/health`. Liveness and readiness probes are available at `/actuator/health/liveness` and `/actuator/health/readiness`; Compose uses readiness to report API and worker health. Readiness requires the application and PostgreSQL, while Kafka delivery remains buffered in the outbox during broker outages. Scale workers with `docker compose up --build --scale worker=3`.
+Open the dashboard at `http://localhost:8080/`, Swagger at `http://localhost:8080/swagger-ui.html`, and health at `http://localhost:8080/actuator/health`. Liveness and readiness probes are available at `/actuator/health/liveness` and `/actuator/health/readiness`; Compose uses readiness to report API and worker health. Readiness requires the application and PostgreSQL; worker readiness also requires Kafka, while the API can continue accepting jobs into the durable outbox during broker outages. Redis remains optional for worker claims. Scale workers with `docker compose up --build --scale worker=3`.
 
 For a local Maven check, use `mvn test package`. Testcontainers integration tests need a working Docker connection; they are skipped when Docker is unavailable. The app uses Flyway migrations and Hibernate schema validation. For an old local database created by an earlier prototype version, use a disposable database or migrate its data before applying this schema.
 

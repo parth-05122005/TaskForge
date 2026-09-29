@@ -86,6 +86,7 @@ class PlatformContainerIntegrationTest {
 
     @Test void outboxDeliveryWorkerExecutionAndDuplicateKafkaDeliveryAreDurable() throws Exception {
         mockMvc.perform(get("/actuator/health/readiness")).andExpect(status().isOk());
+        mockMvc.perform(get("/actuator/health/broker")).andExpect(status().isOk());
         assertTrue(workers.count()>0,"worker runtime should register itself at startup");
         User owner=users.save(new User("platform-integration@example.com","test-hash"));
         Job job=jobs.save(new Job(owner,"container e2e",null,"REPORT","{\"reportType\":\"TEST\"}",ScheduleType.IMMEDIATE,null,Instant.now(),JobPriority.HIGH,2,30));

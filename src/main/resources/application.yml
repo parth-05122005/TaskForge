@@ -31,7 +31,7 @@ management:
   endpoint.health:
     show-details: never
     probes.enabled: true
-    group.readiness.include: readinessState,db
+    group.readiness.include: readinessState,db,broker
 springdoc.swagger-ui.path: /swagger-ui.html
 taskforge:
   cors:
