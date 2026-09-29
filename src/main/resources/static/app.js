@@ -9,7 +9,9 @@ let refreshingEvents = false;
 let refreshPending = false;
 let historyJob = null;
 let workerPage = 0;
+let jobPage = 0;
 const workerPageSize = 25;
+const jobPageSize = 25;
 
 class StaleSessionResponse extends Error {}
 
@@ -24,10 +26,12 @@ function setAuthState() {
 }
 
 function clearPrivateDashboard() {
-  ["#metrics", "#jobs", "#workers", "#worker-pagination", "#events", "#execution-list", "#history-pagination"].forEach((selector) => $(selector).replaceChildren());
+  ["#metrics", "#jobs", "#workers", "#worker-pagination", "#job-pagination", "#events", "#execution-list", "#history-pagination"].forEach((selector) => $(selector).replaceChildren());
   $("#job-count").textContent = "0 shown";
+  $("#job-total").textContent = "0 total";
   $("#worker-count").textContent = "0 total";
   $("#worker-panel").classList.add("hidden");
+  jobPage = 0;
   $("#job-detail").close();
 }
 
@@ -71,7 +75,9 @@ function render(snapshot) {
     const box = node("div", null, "metric"); box.append(node("span", status.replaceAll("_", " "))); box.append(node("strong", String(count))); metrics.append(box);
   });
   const tbody = $("#jobs"); tbody.replaceChildren();
-  $("#job-count").textContent = `${snapshot.jobs.length} shown`;
+  jobPage = snapshot.jobPage;
+  $("#job-count").textContent = `Page ${snapshot.jobPage + 1} · ${snapshot.jobs.length} shown`;
+  $("#job-total").textContent = `${snapshot.totalJobs} total`;
   if (!snapshot.jobs.length) {
     const emptyRow=document.createElement("tr");const emptyCell=node("td","No jobs yet. Create a demo job below.","empty");emptyCell.colSpan=6;emptyRow.append(emptyCell);tbody.append(emptyRow);
   }
@@ -87,6 +93,12 @@ function render(snapshot) {
     else if (job.cancellationRequested) action.textContent = "Cancel requested";
     row.append(action); tbody.append(row);
   });
+  const jobPagination=$("#job-pagination");jobPagination.replaceChildren();
+  if(snapshot.totalJobs>snapshot.jobSize){
+    const previous=node("button","Previous","button secondary small");previous.disabled=snapshot.jobPage===0;previous.onclick=()=>{jobPage=snapshot.jobPage-1;refresh();};
+    const next=node("button","Next","button secondary small");next.disabled=(snapshot.jobPage+1)*snapshot.jobSize>=snapshot.totalJobs;next.onclick=()=>{jobPage=snapshot.jobPage+1;refresh();};
+    jobPagination.append(previous,node("span",`Page ${snapshot.jobPage+1} of ${Math.ceil(snapshot.totalJobs/snapshot.jobSize)}`),next);
+  }
   const workerList = $("#workers"); workerList.replaceChildren();
   workerPage = snapshot.workerPage;
   $("#worker-count").textContent = `${snapshot.totalWorkers} total · showing ${snapshot.workers.length}`;
@@ -125,8 +137,8 @@ async function refresh() {
   if (refreshing) { refreshPending=true; return; }
   refreshing = true;
   const eventQuery = eventCursor ? `afterId=${eventCursor}` : `since=${encodeURIComponent(initialSince)}`;
-  const query = `${eventQuery}&workerPage=${workerPage}&workerSize=${workerPageSize}`;
-  try { const data = await api(`/api/dashboard/snapshot?${query}`); if(sessionStorage.getItem(tokenKey)===currentToken&&data.workerPage===workerPage)render(data); }
+  const query = `${eventQuery}&workerPage=${workerPage}&workerSize=${workerPageSize}&jobPage=${jobPage}&jobSize=${jobPageSize}`;
+  try { const data = await api(`/api/dashboard/snapshot?${query}`); if(sessionStorage.getItem(tokenKey)===currentToken&&data.workerPage===workerPage&&data.jobPage===jobPage)render(data); }
   catch (error) { if (!(error instanceof StaleSessionResponse) && sessionStorage.getItem(tokenKey)===currentToken) { $("#connection").textContent = "API unavailable"; $("#connection").className = "pill warn"; console.error(error); } }
   finally { refreshing = false;if(refreshPending){refreshPending=false;refresh();} }
 }

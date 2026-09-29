@@ -18,6 +18,8 @@ class DashboardControllerTest {
 
         assertThrows(IllegalArgumentException.class,()->controller.snapshot(admin,null,null,-1,25));
         assertThrows(IllegalArgumentException.class,()->controller.snapshot(admin,null,null,0,101));
+        assertThrows(IllegalArgumentException.class,()->controller.snapshot(admin,null,null,0,25,-1,25));
+        assertThrows(IllegalArgumentException.class,()->controller.snapshot(admin,null,null,0,25,0,101));
 
         verifyNoInteractions(dashboard);
     }

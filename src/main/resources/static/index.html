@@ -16,7 +16,7 @@
       <div class="page-heading"><div><p class="eyebrow">OPERATIONS / LIVE</p><h1>Job control room</h1><p class="muted">Lifecycle events refresh every 1.5 seconds; jobs and workers refresh every 5 seconds.</p></div><button id="refresh" class="button secondary">Refresh now</button></div>
       <div id="metrics" class="metrics"></div>
       <div class="columns">
-        <section class="panel"><div class="section-head"><div><p class="eyebrow">QUEUE</p><h2>Recent jobs</h2></div><span id="job-count" class="muted"></span></div><div class="table-wrap"><table><thead><tr><th>Job</th><th>Type</th><th>Status</th><th>Worker</th><th>Attempts</th><th></th></tr></thead><tbody id="jobs"></tbody></table></div></section>
+        <section class="panel"><div class="section-head"><div><p class="eyebrow">QUEUE</p><h2>Jobs</h2><span id="job-count" class="muted"></span></div><span id="job-total" class="muted"></span></div><div class="table-wrap"><table><thead><tr><th>Job</th><th>Type</th><th>Status</th><th>Worker</th><th>Attempts</th><th></th></tr></thead><tbody id="jobs"></tbody></table></div><div id="job-pagination" class="section-head"></div></section>
         <section id="worker-panel" class="panel"><div class="section-head"><div><p class="eyebrow">CAPACITY</p><h2>Workers</h2><span id="worker-count" class="muted"></span></div></div><div id="workers" class="worker-list"></div><div id="worker-pagination" class="section-head"></div></section>
       </div>
       <div class="columns lower">
