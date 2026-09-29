@@ -1,10 +1,11 @@
 package com.taskforge.job;
 import jakarta.persistence.*; import java.time.Instant;
-@Entity @Table(name="job_executions",indexes=@Index(name="ix_execution_job",columnList="job_id,attempt_number"),uniqueConstraints=@UniqueConstraint(name="uq_execution_attempt",columnNames={"job_id","attempt_number"}))
+@Entity @Table(name="job_executions",indexes=@Index(name="ix_execution_job_run_attempt",columnList="job_id,run_number,attempt_number"),uniqueConstraints=@UniqueConstraint(name="uq_execution_attempt",columnNames={"job_id","run_number","attempt_number"}))
 public class JobExecution {
- @Id @GeneratedValue(strategy=GenerationType.IDENTITY) private Long id; @ManyToOne(optional=false,fetch=FetchType.LAZY) private Job job; private String workerId; @Column(name="attempt_number") private int attemptNumber;
- @Enumerated(EnumType.STRING) private JobStatus status; private Instant startedAt; private Instant completedAt; private Long durationMs; @Column(length=2000) private String errorMessage;
- protected JobExecution(){} public JobExecution(Job job,int attempt){this.job=job;this.attemptNumber=attempt;this.status=JobStatus.QUEUED;}
- public Long getId(){return id;} public Job getJob(){return job;} public int getAttemptNumber(){return attemptNumber;} public JobStatus getStatus(){return status;} public String getWorkerId(){return workerId;}
+ @Id @GeneratedValue(strategy=GenerationType.IDENTITY) private Long id; @Version private long version; @ManyToOne(optional=false,fetch=FetchType.LAZY) private Job job; @Column(name="worker_id",length=100) private String workerId; @Column(name="run_number",nullable=false) private int runNumber; @Column(name="attempt_number") private int attemptNumber;
+ @Column(name="lease_token",length=36) private String leaseToken; @Column(name="lease_until") private Instant leaseUntil;
+ @Enumerated(EnumType.STRING) @Column(length=24) private JobStatus status; @Column(name="started_at") private Instant startedAt; @Column(name="completed_at") private Instant completedAt; @Column(name="duration_ms") private Long durationMs; @Column(name="error_message",length=2000) private String errorMessage;
+ protected JobExecution(){} public JobExecution(Job job,int attempt){this(job,job.getRunNumber(),attempt);} public JobExecution(Job job,int runNumber,int attempt){this.job=job;this.runNumber=runNumber;this.attemptNumber=attempt;this.status=JobStatus.QUEUED;}
+ public Long getId(){return id;} public Job getJob(){return job;} public int getRunNumber(){return runNumber;} public int getAttemptNumber(){return attemptNumber;} public JobStatus getStatus(){return status;} public String getWorkerId(){return workerId;} public String getLeaseToken(){return leaseToken;} public Instant getLeaseUntil(){return leaseUntil;} public Instant getStartedAt(){return startedAt;} public Instant getCompletedAt(){return completedAt;} public Long getDurationMs(){return durationMs;} public String getErrorMessage(){return errorMessage;}
  public void start(String worker){status=JobStatus.RUNNING;workerId=worker;startedAt=Instant.now();} public void finish(JobStatus result,String error){status=result;completedAt=Instant.now();durationMs=startedAt==null?0:completedAt.toEpochMilli()-startedAt.toEpochMilli();errorMessage=error;}
 }

@@ -1,91 +1,192 @@
 # TaskForge
 
-TaskForge is a Java 21 / Spring Boot reference implementation of a database-backed job scheduler and Kafka worker. PostgreSQL owns durable job and execution state; Kafka distributes work; Redis holds short-lived worker execution locks. The project favors an explainable single deployable application with API and worker roles over unnecessary service-discovery infrastructure.
+TaskForge is a Java 21 / Spring Boot distributed job scheduler and execution platform. PostgreSQL is the durable source of truth, Kafka carries at-least-once work and lifecycle events, and Redis supplies expiring coordination locks and API rate limits. The API and worker roles use the same application image.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  Client --> API[TaskForge API + scheduler]
-  API --> PG[(PostgreSQL: jobs and attempts)]
-  API --> K[(Kafka: taskforge.jobs.execute)]
-  K --> W1[Worker]
-  K --> W2[Worker]
-  W1 --> R[(Redis: TTL execution locks)]
-  W2 --> R
+  Client --> API[API + scheduler + operator dashboard]
+  API --> PG[(PostgreSQL)]
+  API --> Outbox[Transactional outbox]
+  Outbox --> K[(Kafka)]
+  K --> W1[Worker instance]
+  K --> W2[Worker instance]
+  K --> EventConsumer[Lifecycle event consumer]
+  W1 --> Redis[(Redis lock + rate limits)]
+  W2 --> Redis
   W1 --> PG
   W2 --> PG
+  PG --> Events[Persisted lifecycle history]
+  Events --> UI[Dashboard polling API]
 ```
 
-## Current implementation
+## Problem and persistence model
 
-- BCrypt registration/login and signed JWT bearer authentication.
-- Owner-scoped paginated job listing, detail, create, cancel, and execution history endpoints; `ADMIN` can read all jobs via the same listing route.
-- Explicit state transition rules, due-job selection with PostgreSQL pessimistic row locks, attempt history, and retry delay.
-- Kafka JSON job delivery and competing worker consumers. Redis `SET NX` locks use a per-delivery random token, TTL, and compare-before-delete Lua release.
-- Strategy-style job handlers for report, email, data, HTTP, long-running demo, and forced-failure job types.
-- Actuator health/metrics endpoints, springdoc Swagger UI, Docker Compose for PostgreSQL, Redis, Kafka, API, and worker.
+TaskForge moves slow or bursty background work out of request-handling servers. API instances accept and schedule work, PostgreSQL records what should happen, Kafka distributes runnable attempts, and worker instances execute them independently. This avoids tying report generation, notifications, reconciliation, backups, ETL, and synchronization to a single application process.
+
+PostgreSQL tables are created by Flyway:
+
+- `users`: credentials, enabled state, and role.
+- `jobs`: owner, payload, schedule, next run, current lifecycle state, run number, and retry budget.
+- `job_executions`: one durable row per attempt, keyed by job/run/attempt, with worker and lease details.
+- `workers`: worker identity, heartbeat, state, and current job.
+- `outbox_messages`: Kafka records that must be published after their surrounding database transaction commits.
+- `job_events`: persisted lifecycle history used by the dashboard and event topic.
+- `admin_audit_log`: actor, target, and timestamp for administrative account changes.
+
+`runNumber` identifies a scheduled firing; `attemptNumber` counts retries within that firing. A new cron occurrence gets a fresh retry budget while preserving all earlier executions.
+
+## Job lifecycle
+
+```mermaid
+stateDiagram-v2
+  [*] --> CREATED
+  CREATED --> SCHEDULED
+  SCHEDULED --> QUEUED
+  RETRYING --> QUEUED
+  QUEUED --> RUNNING
+  RUNNING --> SUCCESS
+  RUNNING --> RETRYING
+  RUNNING --> FAILED
+  RUNNING --> TIMEOUT
+  RUNNING --> CANCELLED: cancellation requested
+  SUCCESS --> SCHEDULED: next cron occurrence or manual trigger
+  FAILED --> SCHEDULED: manual trigger
+  TIMEOUT --> RETRYING
+  TIMEOUT --> SCHEDULED: next cron occurrence
+```
+
+Retries are scheduled in PostgreSQL with an exponential delay. The scheduler claims due rows with `FOR UPDATE SKIP LOCKED`; multiple API instances therefore divide the due set without relying on JVM-local synchronization.
+
+## Kafka and Redis
+
+Kafka topics:
+
+- `taskforge.jobs.execute`: keyed by job ID and consumed by the `taskforge-workers` group.
+- `taskforge.jobs.events`: lifecycle events emitted after the matching state and audit rows commit.
+- `taskforge.jobs.dlq`: attempts exhausted by permanent failure, retry exhaustion, or worker loss.
+
+The API role runs a separate `taskforge-event-notifications` consumer group for lifecycle events. It writes structured log entries; PostgreSQL remains the durable audit source if that consumer is offline.
+
+The outbox relay waits for broker acknowledgement, then marks the row published. A crash between those actions can cause duplicate delivery; database execution claims make repeats of the same execution ID harmless to durable state. Kafka and database state are not a distributed exactly-once transaction.
+
+Redis stores TTL-based worker heartbeats, rate-limit counters, and optional job locks released with a compare-token Lua script. A Redis outage does not block worker claims: PostgreSQL remains authoritative. Rate limiting also fails open during Redis outages so authentication/API availability is preserved.
+
+## Features
+
+- BCrypt registration/login and signed JWT authentication. Public registration always creates `USER`; an initial `ADMIN` can be bootstrapped from environment variables.
+- Owner-scoped paginated job APIs, editable unstarted jobs, cancellation requests, manual trigger, status filters, and per-attempt history.
+- State transitions guarded by the `Job` domain entity. PostgreSQL `FOR UPDATE SKIP LOCKED` claims due work across scheduler instances.
+- A PostgreSQL transactional outbox writes queued state, execution history, and Kafka messages in the same transaction. A separate relay waits for broker acknowledgement, records delivery, and backs off after errors.
+- Atomic database worker claims, per-execution lease tokens and bounded expiry, best-effort Redis TTL job locks, worker heartbeats, stale-worker detection, and lease recovery.
+- Five- or six-field cron expressions, IANA time zones, and a skip-missed-runs policy: a missed cron occurrence is not replayed; the next future occurrence is calculated after the current run finishes.
+- Retryable and permanent failures, configurable capped exponential retry delay, cooperative execution timeouts, durable running-job cancellation requests, and a `taskforge.jobs.dlq` event when retries are exhausted.
+- `taskforge.jobs.events` lifecycle events are stored in PostgreSQL, relayed through the outbox, and consumed by a separate notification/logging listener. The operator dashboard polls persisted state every 1.5 seconds and displays jobs, assignments, workers, attempts, and events.
+- Flyway schema migration, Actuator, Prometheus metrics, request IDs, structured log fields, rate limits, OpenAPI/Swagger, and Docker Compose.
 
 ## Run locally
 
-Install Docker Desktop, then from this directory run:
+Requirements: Docker Desktop, Java 21+, and Maven 3.9+.
+
+1. Copy `.env.example` to `.env`.
+2. Set unique `DB_PASSWORD` and a random `JWT_SECRET` of at least 32 bytes. Set `TASKFORGE_ADMIN_EMAIL` and a unique `TASKFORGE_ADMIN_PASSWORD` (at least 16 characters) if you want the first API startup to create an admin account.
+3. Run:
 
 ```sh
 docker compose up --build
 ```
 
-Open Swagger UI at `http://localhost:8080/swagger-ui.html`; health is at `/actuator/health`. For a local Maven build, use Maven 3.9+ and Java 21: `mvn test` and `mvn package`. No Maven wrapper is included. Compose has local-development fallback credentials for convenience; create a `.env` from `.env.example` and replace both values before sharing or deploying. Never use those fallback values outside local development.
+Open the dashboard at `http://localhost:8080/`, Swagger at `http://localhost:8080/swagger-ui.html`, and health at `http://localhost:8080/actuator/health`. Scale workers with `docker compose up --build --scale worker=3`.
+
+For a local Maven check, use `mvn test package`. Testcontainers integration tests need a working Docker connection; they are skipped when Docker is unavailable. The app uses Flyway migrations and Hibernate schema validation. For an old local database created by an earlier prototype version, use a disposable database or migrate its data before applying this schema.
 
 ## Configuration
 
-| Variable | Purpose | Local default |
-|---|---|---|
-| `DB_USER`, `DB_PASSWORD` | PostgreSQL Compose credentials | taskforge / local-dev-only |
-| `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` | JDBC configuration | Compose sets these |
-| `SPRING_DATA_REDIS_HOST` | Redis hostname | localhost; Compose uses redis |
-| `SPRING_KAFKA_BOOTSTRAP_SERVERS` | Kafka brokers | localhost:9092; Compose uses kafka:9092 |
-| `TASKFORGE_JWT_SECRET` | HMAC signing key (minimum 32 bytes) | local-only placeholder |
-| `TASKFORGE_ROLE` | `api` runs scheduler; `worker` consumes Kafka | api |
+| Variable | Purpose |
+|---|---|
+| `DB_USER`, `DB_PASSWORD` | PostgreSQL Compose credentials; set `DB_PASSWORD` in `.env` |
+| `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` | JDBC connection settings |
+| `SPRING_DATA_REDIS_HOST` | Redis host |
+| `SPRING_KAFKA_BOOTSTRAP_SERVERS` | Kafka bootstrap servers |
+| `TASKFORGE_JWT_SECRET` | HMAC signing key, at least 32 bytes |
+| `TASKFORGE_ROLE` | `api` runs scheduler/outbox/recovery; `worker` consumes work |
+| `TASKFORGE_ADMIN_EMAIL`, `TASKFORGE_ADMIN_PASSWORD` | Optional first-start admin bootstrap; existing accounts are not promoted |
+| `TASKFORGE_SCHEDULER_INTERVAL` | Due-job polling interval in milliseconds |
+| `TASKFORGE_OUTBOX_INTERVAL` | Outbox relay polling interval in milliseconds |
+| `TASKFORGE_HEARTBEAT_INTERVAL` | Worker heartbeat interval in milliseconds |
+| `TASKFORGE_RECOVERY_INTERVAL` | Lease/dead-worker recovery interval in milliseconds |
+| `TASKFORGE_RETRY_BASE_DELAY`, `TASKFORGE_RETRY_MAX_DELAY` | Exponential retry base and cap in seconds |
+| `TASKFORGE_KAFKA_MAX_POLL_INTERVAL_MS` | Worker consumer poll deadline; default exceeds the maximum 24-hour job timeout |
 
-## APIs
+The `.env` file is ignored by Git. No deployment credentials should be committed.
 
-- `POST /api/auth/register`, `POST /api/auth/login`
-- `POST /api/jobs`, `GET /api/jobs?page=0&size=20&sort=createdAt,desc`
-- `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/jobs/{id}/executions`
-- `GET /actuator/health`, `/actuator/metrics`; Swagger at `/swagger-ui.html`
+## API quick start
 
-Registration accepts `{ "email": "dev@example.com", "password": "a-long-password" }`. Use the returned `accessToken` as `Authorization: Bearer ...`. Job request example:
+Register a user:
 
-```json
+```http
+POST /api/auth/register
+Content-Type: application/json
+
+{"email":"dev@example.com","password":"a-long-password"}
+```
+
+Use the returned `accessToken` as `Authorization: Bearer <token>`. Create an immediate job:
+
+```http
+POST /api/jobs
+Authorization: Bearer <token>
+Content-Type: application/json
+
 {
-  "name": "Daily report",
-  "description": "Generate the daily report",
-  "type": "REPORT_GENERATION",
-  "payload": {"reportType":"DAILY_SALES"},
-  "scheduleType": "IMMEDIATE",
-  "priority": "HIGH",
-  "maxRetries": 3,
-  "timeoutSeconds": 300
+  "name":"Daily report",
+  "type":"REPORT_GENERATION",
+  "payload":{"reportType":"DAILY_SALES"},
+  "scheduleType":"IMMEDIATE",
+  "priority":"HIGH",
+  "maxRetries":3,
+  "timeoutSeconds":60
 }
 ```
 
-Supported schedule enum values are `IMMEDIATE`, `ONE_TIME`, and `CRON`. `ONE_TIME` accepts `runAt` as an ISO-8601 timestamp; CRON currently requires a cron expression but recurring next-run calculation is not yet implemented. Immediate and due work is dispatched by the scheduler. Job types supported are `REPORT`, `REPORT_GENERATION`, `EMAIL_NOTIFICATION`, `DATA_PROCESSING`, `HTTP_REQUEST`, `DEMO_LONG_RUNNING_TASK`, and `DEMO_FAIL`.
+Main routes:
 
-## Data and delivery semantics
+- Auth: `POST /api/auth/register`, `POST /api/auth/login`
+- Jobs: `POST/GET /api/jobs`, `GET/PUT/DELETE /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/trigger`, `GET /api/jobs/{id}/executions`
+- Workers (admin only): `GET /api/workers`, `GET /api/workers/{id}`
+- Dashboard snapshot: `GET /api/dashboard/snapshot?since=<ISO-8601 timestamp>`
+- Admin: `GET /api/admin/statistics`, `GET /api/admin/jobs`, `GET /api/admin/workers`, `POST /api/admin/users/{id}/disable`
+- Observability: `/actuator/health`, `/actuator/info`, `/actuator/metrics`, `/actuator/prometheus`
 
-`jobs` is the durable source of truth; `job_executions` is per-attempt history with a `(job_id, attempt_number)` uniqueness constraint. The due query orders by priority and time and locks selected rows with `FOR UPDATE`; concurrent scheduler transactions skip contention through row locking, so they do not both claim the same row. This protects database claims across app instances, unlike JVM synchronization.
+Job types implemented as separate local handler strategies: `REPORT`, `REPORT_GENERATION`, `EMAIL_NOTIFICATION`, `DATA_PROCESSING`, `HTTP_REQUEST`, `DEMO_LONG_RUNNING_TASK`, and `DEMO_FAIL`. These simulate work and validate basic payload shape; the HTTP/email/report handlers do not call external systems yet. Add a `JobHandler` bean to register a new type.
 
-Kafka processing is at-least-once. A Redis lock limits concurrent execution of a job, and a completed execution status prevents replay from being run again. A crash after performing an external side effect but before persisting success can still cause that side effect to happen again. A lock TTL can expire while a slow worker is still alive. Exactly-once effects require idempotent downstream operations or an application-level idempotency key. The current version sends Kafka work from the scheduler transaction without a transactional outbox, so a database commit and broker publish are not atomic; the outbox pattern is the next production-hardening step.
+## Delivery, retries, and limits
 
-## Lifecycle and recovery limits
+The scheduler locks due rows with `FOR UPDATE SKIP LOCKED`, then persists the queued job, execution row, and execute-topic outbox record in one PostgreSQL transaction. The relay publishes and waits for Kafka acknowledgement before marking the outbox row delivered. A crash after Kafka acknowledgement but before that database update can publish the same message twice; workers use an atomic execution claim and lease token to prevent a duplicate from changing durable completion state.
 
-Allowed transitions are centralized in `Job.transition`. Retries are capped by `maxRetries` and use capped exponential delay. Workers expose a forced transient failure demo via `DEMO_FAIL`. The `timeoutSeconds` value bounds the lock TTL but does not yet interrupt or time out handler execution. Cancellation applies to unstarted work; running cancellation is not currently an interrupt protocol. Heartbeat registration, worker inventory, dead-worker recovery, admin statistics/user disable, edit/delete/trigger APIs, request rate limiting, metrics counters, and CRON recurrence computation remain future work. Worker process failures rely on Kafka redelivery and lock expiry; there is no lease-based recovery reconciler yet.
+This is **at-least-once** processing, not exactly-once side effects. A process can crash after an external side effect but before completion is committed. Handlers must be idempotent where possible. Workers poll the durable cancellation flag while running and interrupt cooperative handlers; timeout handling also requests interruption. The worker waits for the handler thread to exit before recording the result so it cannot knowingly overlap a retry. Java cannot forcibly stop arbitrary non-cooperative code. Heartbeats cannot extend a lease past the execution timeout plus a 20-second ceiling, and recovery waits for that lease to expire plus a 10-second safety grace. For untrusted or non-interruptible workloads, use a process/container isolation boundary and terminate that isolated workload at its deadline.
 
-## Design decisions and next steps
+Redis locks have TTLs and compare-token release, but are best-effort coordination aids; workers fall back to PostgreSQL claims if Redis is unavailable. PostgreSQL execution claims and leases are authoritative. Recovery marks the old execution terminal before a retry can be scheduled, so a stale worker cannot overwrite its durable result. The per-claim lease token also fences normal completion. Fencing cannot undo an external side effect already performed by that worker. Cancellation is polled at 250 ms intervals; if cancellation races with successful completion, the attempt is recorded and the job remains cancelled (a cron job is not rescheduled).
 
-- JPA schema update is enabled for a disposable local demo. Use versioned Flyway migrations before production.
-- `taskforge.role=api` and `taskforge.role=worker` let the same image run distinct roles. Scale workers with additional Compose replicas or an orchestrator.
-- Kafka carries work distribution; PostgreSQL remains authoritative. Redis is coordination only and has expiring keys.
-- The single-node Kafka broker is for local development and has no replication/fault tolerance.
-- Priorities affect scheduler claim ordering, but Kafka partition ordering and competing consumers do not guarantee strict priority execution.
-- Before production: add transactional outbox, a worker lease/heartbeat reconciler, enforce handler timeouts, secure broker and Redis connections, implement migrations, richer admin and schedule APIs, and add Testcontainers integration and concurrency tests.
+Workers process one Kafka record per poll and configure the maximum poll interval above the supported job timeout, avoiding normal long jobs being mistaken for stalled consumers. A worker process crash is still detected by Kafka heartbeats and the independent PostgreSQL execution lease.
+
+Retries use a configurable exponential delay, set with `TASKFORGE_RETRY_BASE_DELAY` (default 2 seconds) and `TASKFORGE_RETRY_MAX_DELAY` (default 256 seconds). `maxRetries=3` means one initial attempt plus up to three retries. Validation/unsupported-type `IllegalArgumentException`s are treated as permanent; other handler exceptions are treated as transient. Exhausted attempts, including crashed attempts recovered after a worker lease expires, emit to the DLQ topic unless the job was cancelled.
+
+## Testing
+
+- Unit and service tests cover lifecycle rules, cron/time-zone calculation, retry backoff, controller validation, ownership checks, worker claim/idempotency behavior, and outbox retry behavior.
+- PostgreSQL Testcontainers tests race two scheduler instances and two workers, verify atomic claims and scheduler/outbox persistence, check the lease deadline cap, and recover crashed/cancelled/exhausted attempts.
+- A Spring Boot Testcontainers scenario boots PostgreSQL, Redis, and Kafka together, sends an outbox record through a real worker, and verifies duplicate Kafka delivery does not create a second execution.
+- Redis and Kafka Testcontainers smoke tests check the infrastructure protocols.
+- Testcontainers tests are skipped when Docker is not available; run `mvn test` with Docker running to exercise them.
+
+## Design decisions and next improvements
+
+- PostgreSQL remains authoritative; Kafka and Redis do not hold the only copy of job state.
+- One modular backend image has explicit `api` and `worker` roles. No service discovery or gateway is needed for this initial deployment shape.
+- Compose uses a single-node Kafka broker for local development. It has no broker replication or high availability.
+- The container tests are authoritative for database migration and full app wiring; they must run with Docker Desktop running before relying on those deployment paths.
+- Dashboard updates use short-interval authenticated polling rather than WebSockets; persisted events make reconnects recoverable.
+- Local Compose binds service ports to loopback and runs the application as a non-root user. Compose credentials are development-only and Kafka/Redis are not authenticated; production requires private networking, TLS/authentication, secret management, replicated services, backups, and alerting.
+- Next production hardening: add jitter to retry delays, outbox retention/archival, process isolation for arbitrary handlers, richer admin audit logs, chaos/load tests against a multi-node deployment, and a production Kafka/PostgreSQL/Redis security and HA configuration.
