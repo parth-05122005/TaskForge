@@ -3,7 +3,6 @@ package com.taskforge.worker;
 import com.taskforge.job.*;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,7 +19,7 @@ public class LeaseRecovery {
     @Transactional
     public void recoverExpiredLeases(){
         Instant cutoff=Instant.now().minusSeconds(10);
-        for(JobExecution execution:executions.lockExpiredLeases(cutoff,PageRequest.of(0,100))){
+        for(JobExecution execution:executions.lockExpiredLeases(cutoff,100)){
             Job job=jobs.findByIdForUpdate(execution.getJob().getId()).orElse(null);
             if(job==null||job.getStatus()!=JobStatus.RUNNING)continue;
             String workerId=execution.getWorkerId();

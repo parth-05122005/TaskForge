@@ -107,6 +107,29 @@ class JobRepositoryConcurrencyTest {
     }
 
     @Test @org.springframework.transaction.annotation.Transactional(propagation=org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    void concurrentLeaseRecoverersSkipRowsAlreadyOwnedByAnotherBatch() throws Exception {
+        User owner=users.save(new User("lease-recovery-lock@example.com","hash"));
+        Worker worker=workers.save(new Worker("lease-recovery-lock-worker","host"));
+        Job job=new Job(owner,"expired lease",null,"REPORT","{}",ScheduleType.IMMEDIATE,null,Instant.now(),JobPriority.MEDIUM,1,30);
+        job.beginScheduledRun();job.transition(JobStatus.QUEUED);job=jobs.saveAndFlush(job);
+        JobExecution execution=executions.saveAndFlush(new JobExecution(job,1));
+        Long jobId=job.getId(),executionId=execution.getId();
+        TransactionTemplate tx=new TransactionTemplate(transactionManager);
+        tx.execute(status->{assertEquals(1,executions.claimQueued(executionId,jobId,1,worker.getId(),"expired-recovery-lock",-60));return null;});
+
+        CountDownLatch locked=new CountDownLatch(1),release=new CountDownLatch(1);
+        ExecutorService pool=Executors.newSingleThreadExecutor();
+        try {
+            Future<Integer> first=pool.submit(()->tx.execute(status->{int count=executions.lockExpiredLeases(Instant.now().minusSeconds(10),100).size();locked.countDown();await(release);return count;}));
+            assertTrue(locked.await(5,TimeUnit.SECONDS));
+            int second=tx.execute(status->executions.lockExpiredLeases(Instant.now().minusSeconds(10),100).size());
+            release.countDown();
+            assertEquals(1,first.get(5,TimeUnit.SECONDS));
+            assertEquals(0,second);
+        } finally {release.countDown();pool.shutdownNow();}
+    }
+
+    @Test @org.springframework.transaction.annotation.Transactional(propagation=org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
     void twoWorkersRacingDuplicateDeliveryProduceOnlyOneDurableClaim() throws Exception {
         User owner=users.save(new User("two-workers@example.com","hash"));
         Worker firstWorker=workers.save(new Worker("claim-worker-1","host-1"));
