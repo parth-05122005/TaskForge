@@ -45,5 +45,8 @@ taskforge:
   retry:
     base-delay: ${TASKFORGE_RETRY_BASE_DELAY:2}
     max-delay: ${TASKFORGE_RETRY_MAX_DELAY:256}
+  kafka:
+    topic-partitions: ${TASKFORGE_KAFKA_TOPIC_PARTITIONS:6}
+    topic-replication-factor: ${TASKFORGE_KAFKA_TOPIC_REPLICATION_FACTOR:1}
   bootstrap-admin-email: ${TASKFORGE_ADMIN_EMAIL:}
   bootstrap-admin-password: ${TASKFORGE_ADMIN_PASSWORD:}

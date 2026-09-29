@@ -67,6 +67,8 @@ Kafka topics:
 - `taskforge.jobs.events`: lifecycle events emitted after the matching state and audit rows commit.
 - `taskforge.jobs.dlq`: attempts exhausted by permanent failure, retry exhaustion, or worker loss.
 
+Spring Kafka declares these three topics at startup with six partitions by default. Set `TASKFORGE_KAFKA_TOPIC_PARTITIONS` and `TASKFORGE_KAFKA_TOPIC_REPLICATION_FACTOR` to fit the broker cluster; the local single-node Compose setup uses replication factor one.
+
 Malformed, incomplete, or out-of-range execute-topic records (including timeouts over 24 hours) are copied with their original string value to the DLQ before the source offset is acknowledged (a null Kafka value is represented as the literal `null`). Their DLQ records include `taskforge-dlq-reason`, `taskforge-dlq-worker-id`, and `taskforge-dlq-failed-at` headers. A stable key lets downstream consumers recognize duplicate copies. If publishing to the DLQ fails, the source record is nacked and retried instead of discarded.
 
 The API role runs a separate `taskforge-event-notifications` consumer group for lifecycle events. It writes structured log entries; PostgreSQL remains the durable audit source if that consumer is offline.
@@ -124,6 +126,8 @@ For a local Maven check, use `mvn test package`. Testcontainers integration test
 | `TASKFORGE_RECOVERY_INTERVAL` | Lease/dead-worker recovery interval in milliseconds |
 | `TASKFORGE_HANDLER_STOP_GRACE_SECONDS` | Seconds to wait after interrupting a handler before recording a terminal no-retry timeout/cancellation; valid range is 1–60 |
 | `TASKFORGE_RETRY_BASE_DELAY`, `TASKFORGE_RETRY_MAX_DELAY` | Exponential retry base and cap in seconds |
+| `TASKFORGE_KAFKA_TOPIC_PARTITIONS` | Partition count for execute, lifecycle-event, and DLQ topics; default 6 |
+| `TASKFORGE_KAFKA_TOPIC_REPLICATION_FACTOR` | Replication factor for those topics; default 1 for the local single-broker stack |
 | `TASKFORGE_KAFKA_MAX_POLL_INTERVAL_MS` | Worker consumer poll deadline; default exceeds the maximum 24-hour job timeout |
 
 The `.env` file is ignored by Git. No deployment credentials should be committed.
