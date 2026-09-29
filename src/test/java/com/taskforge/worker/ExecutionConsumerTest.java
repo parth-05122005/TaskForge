@@ -127,11 +127,15 @@ class ExecutionConsumerTest {
         JobHandler nonCooperative=new JobHandler(){public String type(){return "NON_COOPERATIVE";}public void execute(JobMessage ignored){while(releaseHandler.getCount()>0){try{releaseHandler.await();}catch(InterruptedException ignoredInterrupt){/* emulate unsafe handler */}}}};
         ExecutionConsumer consumer=new ExecutionConsumer(redis,new DemoHandlers(java.util.List.of(nonCooperative)),runtime,workflow,new ObjectMapper(),1);
         Acknowledgment acknowledgment=mock(Acknowledgment.class);
+        Acknowledgment secondAcknowledgment=mock(Acknowledgment.class);
         try {
             consumer.receive("{\"jobId\":9,\"executionId\":99,\"runNumber\":1,\"type\":\"NON_COOPERATIVE\",\"payload\":\"{}\",\"priority\":\"HIGH\",\"attempt\":1,\"timeoutSeconds\":1}",acknowledgment);
             var ordered=inOrder(workflow,acknowledgment);
             ordered.verify(workflow).finish(any(JobMessage.class),eq("worker-1"),eq("lease"),eq(JobStatus.TIMEOUT),eq(false),contains("ignored timeout interruption"));
             ordered.verify(acknowledgment).acknowledge();
+            consumer.receive("{\"jobId\":10,\"executionId\":100,\"runNumber\":1,\"type\":\"NON_COOPERATIVE\",\"payload\":\"{}\",\"priority\":\"HIGH\",\"attempt\":1,\"timeoutSeconds\":1}",secondAcknowledgment);
+            verify(workflow,never()).claim(argThat(message->message.jobId().equals(10L)),anyString());
+            verify(secondAcknowledgment).nack(Duration.ofSeconds(1));
         } finally {releaseHandler.countDown();consumer.shutdown();}
     }
 
