@@ -7,8 +7,8 @@ import com.taskforge.job.*;
 import com.taskforge.worker.Worker;
 import com.taskforge.worker.WorkerRepository;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.annotation.DirtiesContext;
@@ -36,8 +36,8 @@ import static org.junit.jupiter.api.Assertions.*;
 @SpringBootTest
 @Testcontainers(disabledWithoutDocker=true)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
-@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class PlatformContainerIntegrationTest {
+    private static ConfigurableApplicationContext contextToClose;
     @Container static final PostgreSQLContainer<?> postgres=new PostgreSQLContainer<>("postgres:17-alpine");
     @Container static final GenericContainer<?> redis=new GenericContainer<>(DockerImageName.parse("redis:7-alpine")).withExposedPorts(6379);
     @Container static final KafkaContainer kafka=new KafkaContainer(DockerImageName.parse("apache/kafka-native:3.8.0"));
@@ -64,7 +64,8 @@ class PlatformContainerIntegrationTest {
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired ConfigurableApplicationContext applicationContext;
 
-    @AfterAll void closeApplicationContextBeforeContainersStop(){applicationContext.close();}
+    @BeforeEach void rememberContextForOrderedShutdown(){contextToClose=applicationContext;}
+    @AfterAll static void closeApplicationContextBeforeContainersStop(){if(contextToClose!=null)contextToClose.close();}
 
     @Test void outboxDeliveryWorkerExecutionAndDuplicateKafkaDeliveryAreDurable() throws Exception {
         assertTrue(workers.count()>0,"worker runtime should register itself at startup");

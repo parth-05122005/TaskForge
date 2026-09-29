@@ -12,23 +12,31 @@ import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.*;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import org.apache.kafka.clients.producer.ProducerRecord;
+import org.springframework.kafka.core.KafkaTemplate;
 
 @Component
 @org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name="taskforge.role",havingValue="worker")
 public class ExecutionConsumer {
     private static final org.slf4j.Logger log=org.slf4j.LoggerFactory.getLogger(ExecutionConsumer.class);
-    private final StringRedisTemplate redis;private final DemoHandlers handlers;private final WorkerRuntime runtime;private final ExecutionWorkflowService workflow;private final ObjectMapper mapper;private final long handlerStopGraceSeconds;
+    private final StringRedisTemplate redis;private final DemoHandlers handlers;private final WorkerRuntime runtime;private final ExecutionWorkflowService workflow;private final ObjectMapper mapper;private final KafkaTemplate<String,String> kafka;private final long handlerStopGraceSeconds;
     private final ExecutorService executionPool=Executors.newCachedThreadPool();
-    public ExecutionConsumer(StringRedisTemplate redis,DemoHandlers handlers,WorkerRuntime runtime,ExecutionWorkflowService workflow,ObjectMapper mapper){this(redis,handlers,runtime,workflow,mapper,5);}
+    public ExecutionConsumer(StringRedisTemplate redis,DemoHandlers handlers,WorkerRuntime runtime,ExecutionWorkflowService workflow,ObjectMapper mapper){this(redis,handlers,runtime,workflow,mapper,null,5);}
+    public ExecutionConsumer(StringRedisTemplate redis,DemoHandlers handlers,WorkerRuntime runtime,ExecutionWorkflowService workflow,ObjectMapper mapper,long handlerStopGraceSeconds){this(redis,handlers,runtime,workflow,mapper,null,handlerStopGraceSeconds);}
     @org.springframework.beans.factory.annotation.Autowired
-    public ExecutionConsumer(StringRedisTemplate redis,DemoHandlers handlers,WorkerRuntime runtime,ExecutionWorkflowService workflow,ObjectMapper mapper,@org.springframework.beans.factory.annotation.Value("${taskforge.handler-stop-grace-seconds:5}") long handlerStopGraceSeconds){if(handlerStopGraceSeconds<1||handlerStopGraceSeconds>60)throw new IllegalArgumentException("Handler stop grace must be between 1 and 60 seconds");this.redis=redis;this.handlers=handlers;this.runtime=runtime;this.workflow=workflow;this.mapper=mapper;this.handlerStopGraceSeconds=handlerStopGraceSeconds;}
+    public ExecutionConsumer(StringRedisTemplate redis,DemoHandlers handlers,WorkerRuntime runtime,ExecutionWorkflowService workflow,ObjectMapper mapper,KafkaTemplate<String,String> kafka,@org.springframework.beans.factory.annotation.Value("${taskforge.handler-stop-grace-seconds:5}") long handlerStopGraceSeconds){if(handlerStopGraceSeconds<1||handlerStopGraceSeconds>60)throw new IllegalArgumentException("Handler stop grace must be between 1 and 60 seconds");this.redis=redis;this.handlers=handlers;this.runtime=runtime;this.workflow=workflow;this.mapper=mapper;this.kafka=kafka;this.handlerStopGraceSeconds=handlerStopGraceSeconds;}
 
     @KafkaListener(topics="taskforge.jobs.execute",groupId="taskforge-workers")
     public void receive(String payload,Acknowledgment acknowledgment){
+        if(payload==null){deadLetterMalformed(null,acknowledgment,"null Kafka record value");return;}
         JobMessage message;
         try {message=mapper.readValue(payload,JobMessage.class);}
-        catch(JsonProcessingException malformed){log.atError().setCause(malformed).log("Discarding malformed execution message");acknowledgment.acknowledge();return;}
-        if(message.jobId()==null||message.executionId()==null||message.runNumber()<0||message.type()==null||message.type().isBlank()||message.payload()==null||message.attempt()<1||message.timeoutSeconds()<1){log.atError().addKeyValue("jobId",message.jobId()).addKeyValue("executionId",message.executionId()).log("Discarding incomplete execution message");acknowledgment.acknowledge();return;}
+        catch(JsonProcessingException malformed){deadLetterMalformed(payload,acknowledgment,"malformed JSON: "+malformed.getOriginalMessage());return;}
+        if(message.jobId()==null||message.executionId()==null||message.runNumber()<0||message.type()==null||message.type().isBlank()||message.payload()==null||message.attempt()<1||message.timeoutSeconds()<1){deadLetterMalformed(payload,acknowledgment,"missing or invalid required execution fields");return;}
         String key="taskforge:lock:job:"+message.jobId(),token=UUID.randomUUID().toString();
         boolean redisAvailable=true;
         boolean locked=false;
@@ -87,6 +95,29 @@ public class ExecutionConsumer {
                 redis.execute(new org.springframework.data.redis.core.script.DefaultRedisScript<>(script,Long.class),List.of(key),token);
             } catch(RuntimeException unavailable) {log.warn("Redis lock release failed; its TTL will expire",unavailable);}
         }
+    }
+
+    private void deadLetterMalformed(String payload,Acknowledgment acknowledgment,String reason){
+        if(kafka==null){log.error("Cannot dead-letter malformed execution message because KafkaTemplate is unavailable; leaving source record unacknowledged");acknowledgment.nack(Duration.ofSeconds(1));return;}
+        try{
+            String key=poisonKey(payload);
+            if(payload!=null)try{var tree=mapper.readTree(payload);if(tree!=null&&tree.hasNonNull("jobId")){String jobId=tree.get("jobId").asText();key=jobId.substring(0,Math.min(200,jobId.length()));}}catch(JsonProcessingException ignored){/* Keep the stable opaque key for invalid JSON. */}
+            ProducerRecord<String,String> record=new ProducerRecord<>("taskforge.jobs.dlq",key,payload==null?"null":payload);
+            record.headers().add("taskforge-dlq-reason",reason.substring(0,Math.min(500,reason.length())).getBytes(StandardCharsets.UTF_8));
+            record.headers().add("taskforge-dlq-worker-id",runtime.id().getBytes(StandardCharsets.UTF_8));
+            record.headers().add("taskforge-dlq-failed-at",java.time.Instant.now().toString().getBytes(StandardCharsets.UTF_8));
+            kafka.send(record).get(10,TimeUnit.SECONDS);
+            log.atError().addKeyValue("workerId",runtime.id()).addKeyValue("reason",reason).log("Malformed execution message durably sent to dead-letter topic");
+            acknowledgment.acknowledge();
+        }catch(Exception failure){
+            log.atError().setCause(failure).addKeyValue("workerId",runtime.id()).log("Failed to dead-letter malformed execution message; source record will be retried");
+            acknowledgment.nack(Duration.ofSeconds(1));
+        }
+    }
+
+    private static String poisonKey(String payload){
+        try{return "poison-"+HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest((payload==null?"<null>":payload).getBytes(StandardCharsets.UTF_8)));}
+        catch(NoSuchAlgorithmException impossible){throw new IllegalStateException("SHA-256 is required by the Java runtime",impossible);}
     }
 
     private boolean interruptAndAwait(Future<?> running,java.util.concurrent.atomic.AtomicBoolean handlerStarted,java.util.concurrent.atomic.AtomicBoolean preventHandlerStart,Object handlerStartGate,CountDownLatch handlerEnded)throws InterruptedException{

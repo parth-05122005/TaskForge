@@ -3,17 +3,68 @@ package com.taskforge.worker;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.taskforge.job.JobMessage;
 import com.taskforge.job.JobStatus;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.Acknowledgment;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class ExecutionConsumerTest {
+    @Test void malformedMessageIsDeadLetteredBeforeSourceAcknowledgement() throws Exception {
+        ExecutionWorkflowService workflow=mock(ExecutionWorkflowService.class);
+        WorkerRuntime runtime=mock(WorkerRuntime.class);when(runtime.id()).thenReturn("worker-1");
+        KafkaTemplate<String,String> kafka=mock(KafkaTemplate.class);
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(java.util.concurrent.CompletableFuture.completedFuture(null));
+        ExecutionConsumer consumer=new ExecutionConsumer(mock(StringRedisTemplate.class),new DemoHandlers(java.util.List.of()),runtime,workflow,new ObjectMapper(),kafka,5);
+        Acknowledgment acknowledgment=mock(Acknowledgment.class);
+        try {
+            consumer.receive("{not-json",acknowledgment);
+            var order=inOrder(kafka,acknowledgment);
+            order.verify(kafka).send(any(ProducerRecord.class));
+            order.verify(acknowledgment).acknowledge();
+            var record=org.mockito.ArgumentCaptor.forClass(ProducerRecord.class);
+            verify(kafka).send(record.capture());
+            assertEquals("taskforge.jobs.dlq",record.getValue().topic());
+            assertEquals("{not-json",record.getValue().value());
+            assertTrue(new String(record.getValue().headers().lastHeader("taskforge-dlq-reason").value(),java.nio.charset.StandardCharsets.UTF_8).startsWith("malformed JSON"));
+        } finally {consumer.shutdown();}
+    }
+
+    @Test void failedDeadLetterPublishLeavesMalformedSourceRecordUnacknowledged() {
+        WorkerRuntime runtime=mock(WorkerRuntime.class);when(runtime.id()).thenReturn("worker-1");
+        KafkaTemplate<String,String> kafka=mock(KafkaTemplate.class);
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("broker unavailable")));
+        ExecutionConsumer consumer=new ExecutionConsumer(mock(StringRedisTemplate.class),new DemoHandlers(java.util.List.of()),runtime,mock(ExecutionWorkflowService.class),new ObjectMapper(),kafka,5);
+        Acknowledgment acknowledgment=mock(Acknowledgment.class);
+        try {
+            consumer.receive("{not-json",acknowledgment);
+            verify(acknowledgment,never()).acknowledge();
+            verify(acknowledgment).nack(Duration.ofSeconds(1));
+        } finally {consumer.shutdown();}
+    }
+
+    @Test void nullKafkaValueIsDeadLetteredAsAnExplicitNullRecord() throws Exception {
+        WorkerRuntime runtime=mock(WorkerRuntime.class);when(runtime.id()).thenReturn("worker-1");
+        KafkaTemplate<String,String> kafka=mock(KafkaTemplate.class);
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(java.util.concurrent.CompletableFuture.completedFuture(null));
+        ExecutionConsumer consumer=new ExecutionConsumer(mock(StringRedisTemplate.class),new DemoHandlers(java.util.List.of()),runtime,mock(ExecutionWorkflowService.class),new ObjectMapper(),kafka,5);
+        Acknowledgment acknowledgment=mock(Acknowledgment.class);
+        try {
+            consumer.receive(null,acknowledgment);
+            var record=org.mockito.ArgumentCaptor.forClass(ProducerRecord.class);
+            verify(kafka).send(record.capture());
+            assertEquals("null",record.getValue().value());
+            verify(acknowledgment).acknowledge();
+        } finally {consumer.shutdown();}
+    }
+
     @Test void durableCancellationRequestInterruptsCooperativeHandlerAndAcknowledgesAfterFinish() throws Exception {
         ExecutionWorkflowService workflow=mock(ExecutionWorkflowService.class);
         when(workflow.claim(any(JobMessage.class),eq("worker-1"))).thenReturn("lease");

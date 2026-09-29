@@ -67,6 +67,8 @@ Kafka topics:
 - `taskforge.jobs.events`: lifecycle events emitted after the matching state and audit rows commit.
 - `taskforge.jobs.dlq`: attempts exhausted by permanent failure, retry exhaustion, or worker loss.
 
+Malformed or incomplete execute-topic records are copied with their original string value to the DLQ before the source offset is acknowledged (a null Kafka value is represented as the literal `null`). Their DLQ records include `taskforge-dlq-reason`, `taskforge-dlq-worker-id`, and `taskforge-dlq-failed-at` headers. A stable key lets downstream consumers recognize duplicate copies. If publishing to the DLQ fails, the source record is nacked and retried instead of discarded.
+
 The API role runs a separate `taskforge-event-notifications` consumer group for lifecycle events. It writes structured log entries; PostgreSQL remains the durable audit source if that consumer is offline.
 
 The outbox relay waits for broker acknowledgement, then marks the row published. A crash between those actions can cause duplicate delivery; database execution claims make repeats of the same execution ID harmless to durable state. Kafka and database state are not a distributed exactly-once transaction.
