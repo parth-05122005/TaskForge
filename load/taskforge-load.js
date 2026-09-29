@@ -30,6 +30,7 @@ export const options = {
     http_req_failed: ['rate<0.01'],
     taskforge_job_completion_rate: ['rate>0.99'],
     taskforge_job_create_milliseconds: ['p(95)<1000'],
+    taskforge_job_completion_seconds: ['p(95)<30'],
   },
 };
 

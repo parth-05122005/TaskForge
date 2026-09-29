@@ -196,7 +196,7 @@ Retries use full jitter over an exponential delay, set with `TASKFORGE_RETRY_BAS
 - A Spring Boot Testcontainers scenario boots PostgreSQL, Redis, and Kafka together, sends an outbox record through a real worker, and verifies duplicate Kafka delivery does not create a second execution.
 - Redis and Kafka Testcontainers smoke tests check the infrastructure protocols.
 - Testcontainers tests are skipped when Docker is not available; run `mvn test` with Docker running to exercise them.
-- `load/taskforge-load.js` provides an optional k6 end-to-end load scenario. Start the Compose stack, create a normal user, then run `k6 run -e TASKFORGE_EMAIL=dev@example.com -e TASKFORGE_PASSWORD=your-password load/taskforge-load.js`. Adjust `JOBS_PER_MINUTE` and `TEST_DURATION` to scale the arrival rate and duration; watch queue depth and worker metrics while the dashboard shows the live flow.
+- `load/taskforge-load.js` provides an optional k6 end-to-end load scenario. Start the Compose stack, create a normal user, then run `k6 run -e TASKFORGE_EMAIL=dev@example.com -e TASKFORGE_PASSWORD=your-password load/taskforge-load.js`. The scenario asserts at least 99% completion, p95 job creation below one second, and p95 end-to-end job completion below 30 seconds. Adjust `JOBS_PER_MINUTE` and `TEST_DURATION` to scale the arrival rate and duration; watch queue depth and worker metrics while the dashboard shows the live flow.
 
 ## Design decisions and next improvements
 
