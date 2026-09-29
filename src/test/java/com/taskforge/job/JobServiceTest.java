@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.taskforge.auth.User;
 import com.taskforge.auth.UserRepository;
 import com.taskforge.common.TaskForgeMetrics;
+import com.taskforge.common.AdminAuditService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import java.util.Optional;
@@ -21,7 +22,8 @@ class JobServiceTest {
         JobExecutionRepository executions=mock(JobExecutionRepository.class);
         JobEventService events=mock(JobEventService.class);
         TaskForgeMetrics metrics=mock(TaskForgeMetrics.class);
-        service=new JobService(jobs,users,new ObjectMapper(),executions,events,metrics);
+        AdminAuditService adminAudit=mock(AdminAuditService.class);
+        service=new JobService(jobs,users,new ObjectMapper(),executions,events,metrics,adminAudit);
         ownedJob=mock(Job.class);
         when(ownedJob.getOwner()).thenReturn(new User("owner@example.com","hash"));
         when(jobs.findById(7L)).thenReturn(Optional.of(ownedJob));

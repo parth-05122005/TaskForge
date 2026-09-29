@@ -159,7 +159,7 @@ Main routes:
 - Jobs: `POST/GET /api/jobs`, `GET/PUT/DELETE /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `POST /api/jobs/{id}/trigger`, `GET /api/jobs/{id}/executions`
 - Workers (admin only): `GET /api/workers`, `GET /api/workers/{id}`
 - Dashboard snapshot: initial `GET /api/dashboard/snapshot?since=<ISO-8601 timestamp>`, then incremental `GET /api/dashboard/snapshot?afterId=<last-event-id>`
-- Admin: `GET /api/admin/statistics`, `GET /api/admin/jobs`, `GET /api/admin/workers`, `POST /api/admin/users/{id}/disable`
+- Admin: `GET /api/admin/statistics`, `GET /api/admin/jobs`, `GET /api/admin/workers`, `GET /api/admin/audit`, `POST /api/admin/users/{id}/disable`
 - Observability: `/actuator/health`, `/actuator/info`, `/actuator/metrics`, `/actuator/prometheus`
 
 Job types implemented as separate local handler strategies: `REPORT`, `REPORT_GENERATION`, `EMAIL_NOTIFICATION`, `DATA_PROCESSING`, `HTTP_REQUEST`, `DEMO_LONG_RUNNING_TASK`, and `DEMO_FAIL`. These simulate work and validate basic payload shape; the HTTP/email/report handlers do not call external systems yet. Add a `JobHandler` bean to register a new type.
@@ -193,4 +193,5 @@ Retries use full jitter over an exponential delay, set with `TASKFORGE_RETRY_BAS
 - The container tests are authoritative for database migration and full app wiring; they must run with Docker Desktop running before relying on those deployment paths.
 - Dashboard updates use short-interval authenticated polling rather than WebSockets; persisted events make reconnects recoverable.
 - Local Compose binds service ports to loopback and runs the application as a non-root user. Compose credentials are development-only and Kafka/Redis are not authenticated; production requires private networking, TLS/authentication, secret management, replicated services, backups, and alerting.
-- Next production hardening: process isolation for arbitrary handlers, broader admin audit logs, chaos/load tests against a multi-node deployment, and a production Kafka/PostgreSQL/Redis security and HA configuration.
+- Admin job mutations are written to `admin_audit_log` in the same transaction as the change and can be inspected through the paginated admin audit endpoint. Entries include actor, target resource, action, timestamp, and request ID when initiated over HTTP.
+- Next production hardening: process isolation for arbitrary handlers, chaos/load tests against a multi-node deployment, and a production Kafka/PostgreSQL/Redis security and HA configuration.

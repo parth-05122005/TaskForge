@@ -11,7 +11,7 @@ import static org.mockito.Mockito.*;
 class AdminServiceTest {
     @Test void disablingUserWritesAuditEntryInSameServiceOperation() {
         UserRepository users=mock(UserRepository.class);
-        AdminAuditLogRepository audit=mock(AdminAuditLogRepository.class);
+        AdminAuditService audit=mock(AdminAuditService.class);
         User actor=mock(User.class),target=mock(User.class);
         when(actor.getId()).thenReturn(1L);
         when(target.getId()).thenReturn(2L);
@@ -24,12 +24,12 @@ class AdminServiceTest {
         new AdminService(users,audit).disable(2L,"ADMIN@example.com");
 
         verify(users).disableIfEnabled(2L);
-        verify(audit).save(any(AdminAuditLog.class));
+        verify(audit).record("ADMIN@example.com","USER","2","USER_DISABLED","Account disabled by administrator");
     }
 
     @Test void lastEnabledAdminCannotBeDisabled() {
         UserRepository users=mock(UserRepository.class);
-        AdminAuditLogRepository audit=mock(AdminAuditLogRepository.class);
+        AdminAuditService audit=mock(AdminAuditService.class);
         User admin=mock(User.class);
         when(admin.getRole()).thenReturn("ADMIN");
         when(admin.isEnabled()).thenReturn(true);
