@@ -242,10 +242,10 @@ class JobRepositoryConcurrencyTest {
         String duplicate=tx.execute(s->workflow.claim(message,worker.getId()));
         assertNotNull(claimed);assertNull(duplicate);
         JobExecution initiallyClaimed=executions.findById(executionId).orElseThrow();
-        assertFalse(initiallyClaimed.getLeaseUntil().isAfter(initiallyClaimed.getStartedAt().plusSeconds(21)),"The initial lease must honor timeout plus the 20-second safety ceiling");
-        tx.execute(s->executions.extendWorkerLeases(worker.getId(),Instant.now().plusSeconds(30)));
+        assertFalse(initiallyClaimed.getLeaseUntil().isAfter(initiallyClaimed.getStartedAt().plusSeconds(21)),"The initial lease must include timeout, configured handler-stop grace, and recovery margin");
+        tx.execute(s->executions.extendWorkerLeases(worker.getId(),Instant.now().plusSeconds(120),80));
         JobExecution active=executions.findById(executionId).orElseThrow();
-        assertFalse(active.getLeaseUntil().isAfter(active.getStartedAt().plusSeconds(50)),"A live heartbeat must not keep a non-cooperative handler leased forever");
+        assertEquals(active.getStartedAt().plusSeconds(81),active.getLeaseUntil(),"The lease ceiling must include timeout plus the maximum 60-second stop grace and 20-second margin");
     }
 
     @Test @org.springframework.transaction.annotation.Transactional(propagation=org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
