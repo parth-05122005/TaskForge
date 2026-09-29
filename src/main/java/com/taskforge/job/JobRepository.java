@@ -1,0 +1,3 @@
+package com.taskforge.job;
+import org.springframework.data.domain.*; import org.springframework.data.jpa.repository.*; import org.springframework.data.repository.query.Param; import jakarta.persistence.LockModeType; import java.time.Instant; import java.util.*;
+public interface JobRepository extends JpaRepository<Job,Long>{Page<Job> findByOwnerId(Long ownerId,Pageable pageable); @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select j from Job j where j.status in ('SCHEDULED','RETRYING') and j.nextRunAt <= :now order by j.priority desc,j.nextRunAt asc") List<Job> lockDue(@Param("now") Instant now,Pageable page);}

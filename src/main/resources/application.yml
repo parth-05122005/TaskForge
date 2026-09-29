@@ -1,0 +1,35 @@
+spring:
+  application.name: taskforge
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/taskforge}
+    username: ${SPRING_DATASOURCE_USERNAME:taskforge}
+    password: ${SPRING_DATASOURCE_PASSWORD:local-dev-only}
+  jpa:
+    hibernate.ddl-auto: update
+    open-in-view: false
+    properties.hibernate.jdbc.time_zone: UTC
+  data.redis.host: ${SPRING_DATA_REDIS_HOST:localhost}
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    consumer:
+      group-id: taskforge-workers
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties.spring.json.trusted.packages: com.taskforge.job
+    listener.ack-mode: manual
+  jackson.default-property-inclusion: non_null
+server.error.include-message: never
+management:
+  endpoints.web.exposure.include: health,info,metrics,prometheus
+  endpoint.health.show-details: never
+springdoc.swagger-ui.path: /swagger-ui.html
+taskforge:
+  jwt-secret: ${TASKFORGE_JWT_SECRET:local-development-secret-change-before-deploy-1234567890}
+  jwt-ttl: PT8H
+  role: ${TASKFORGE_ROLE:api}
+  scheduler-interval: 1000

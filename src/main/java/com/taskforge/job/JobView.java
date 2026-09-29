@@ -1,0 +1,3 @@
+package com.taskforge.job;
+import java.time.Instant;
+public record JobView(Long id,String name,String description,String type,String payload,ScheduleType scheduleType,String cronExpression,Instant nextRunAt,JobPriority priority,JobStatus status,int maxRetries,int timeoutSeconds,int attemptCount,Instant createdAt){public static JobView of(Job j){return new JobView(j.getId(),j.getName(),j.getDescription(),j.getType(),j.getPayload(),j.getScheduleType(),j.getCronExpression(),j.getNextRunAt(),j.getPriority(),j.getStatus(),j.getMaxRetries(),j.getTimeoutSeconds(),j.getAttemptCount(),j.getCreatedAt());}}
