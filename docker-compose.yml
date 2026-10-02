@@ -82,6 +82,7 @@ services:
       retries: 4
       start_period: 90s
   worker:
+    scale: 3
     build: .
     restart: unless-stopped
     environment:

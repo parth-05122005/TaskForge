@@ -70,7 +70,7 @@ Kafka topics:
 - `taskforge.jobs.dlq`: attempts exhausted by permanent failure, retry exhaustion, or worker loss.
 
 Spring Kafka declares these three topics at startup with six partitions by default. Set `TASKFORGE_KAFKA_TOPIC_PARTITIONS` and `TASKFORGE_KAFKA_TOPIC_REPLICATION_FACTOR` to fit the broker cluster; the local single-node Compose setup uses replication factor one.
-The Compose Kafka broker stores KRaft logs in the `kafkadata` named volume so recreating the broker container retains local topics, messages, and consumer offsets. `docker compose down -v` removes this and the PostgreSQL/Redis data volumes.
+The Compose Kafka broker stores KRaft logs in the `kafkadata_v2` named volume so recreating the broker container retains local topics, messages, and consumer offsets. `docker compose down -v` removes this and the PostgreSQL/Redis data volumes.
 
 Malformed, incomplete, or out-of-range execute-topic records (including timeouts over 24 hours) are copied with their original string value to the DLQ before the source offset is acknowledged (a null Kafka value is represented as the literal `null`). Their DLQ records include `taskforge-dlq-reason`, `taskforge-dlq-worker-id`, and `taskforge-dlq-failed-at` headers. A stable key lets downstream consumers recognize duplicate copies. If publishing to the DLQ fails, the source record is nacked and retried instead of discarded.
 
@@ -99,29 +99,68 @@ Redis stores TTL-based worker heartbeats, rate-limit counters, and optional job 
 
 ## Run locally
 
-Requirements: Docker Desktop, Java 21+, and Maven 3.9+.
+For the Docker Compose run path, you need Git and Docker Desktop with Docker Compose v2. The image builds the Java application inside Docker, so a host JDK and Maven installation are not required. Java 21+ and Maven 3.9+ are required only if you want to build or run Maven tests directly on Windows.
 
-1. Copy `.env.example` to `.env`.
-2. Set unique `DB_PASSWORD` and a random `JWT_SECRET` of at least 32 bytes in `.env`; the example intentionally leaves secrets blank, and Compose refuses to start until required values are set. The application has no fallback database password. Set both `TASKFORGE_ADMIN_EMAIL` and a unique `TASKFORGE_ADMIN_PASSWORD` (16 to 72 characters) if you want the first API startup to create an admin account; leave both blank otherwise.
-3. Run:
+### First-time setup on Windows PowerShell
 
-```sh
-docker compose up --build
+Clone the repository and open its folder:
+
+```powershell
+git clone https://github.com/parth-05122005/TaskForge.git
+Set-Location .\TaskForge
 ```
 
-Open the dashboard at `http://localhost:8080/`, Swagger at `http://localhost:8080/swagger-ui.html`, and health at `http://localhost:8080/actuator/health`. Liveness and readiness probes are available at `/actuator/health/liveness` and `/actuator/health/readiness`; Compose uses readiness to report API and worker health. Readiness requires the application and PostgreSQL; worker readiness also requires Kafka, while the API can continue accepting jobs into the durable outbox during broker outages. Redis remains optional for worker claims. Scale workers with `docker compose up --build --scale worker=3`.
+Create the local environment file once, then edit it:
 
-For a Windows PowerShell walkthrough, run this from the repository root with a new email (the script registers it) or an existing account (the script logs in):
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
+
+Set a private `DB_PASSWORD` and a random `JWT_SECRET` of at least 32 characters. Compose will refuse to start if either required value is blank. Keep `.env` on your computer; it is ignored by Git and should not be committed. The application has no fallback database password. To create an initial administrator on the first startup, also set both `TASKFORGE_ADMIN_EMAIL` and a unique `TASKFORGE_ADMIN_PASSWORD` (16 to 72 characters). Leave both blank if you will register a regular account through the dashboard.
+
+Start the complete platform in the background:
+
+```powershell
+docker compose up --build -d
+docker compose ps
+```
+
+Compose starts **three worker containers by default**. Wait for the API and worker health status to become `healthy`, then check readiness:
+
+```powershell
+Invoke-RestMethod http://localhost:8080/actuator/health/readiness
+```
+
+The response should show `status` as `UP`. Open the dashboard at [http://localhost:8080/](http://localhost:8080/) and register or sign in. The Workers panel should show three worker instances. Swagger is at `http://localhost:8080/swagger-ui.html`. PostgreSQL is available to programs on your host at `localhost:5433`; inside Compose the application connects to `postgres:5432`.
+
+To follow service logs:
+
+```powershell
+docker compose logs -f api worker
+```
+
+To stop the application while keeping its database, Kafka, and Redis data:
+
+```powershell
+docker compose down
+```
+
+Do not add `-v` unless you want to delete those persisted data volumes. Use `docker compose up -d --scale worker=1` or another replica count to override the three-worker default.
+
+### Demo walkthrough
+
+With the stack running, run this from the repository root with a new email (the script registers it) or an existing account (the script logs in):
 
 ```powershell
 .\scripts\demo.ps1 -Email 'dev@example.com' -Password 'your-password'
 ```
 
-The script registers or logs in, then creates a retry-then-success job, a once-per-minute recurring report, and six longer jobs for observing worker distribution. It prints the retry result and attempt count; the dashboard shows the schedule, worker assignments, and events. Run `docker compose up --build --scale worker=3` in another PowerShell window before the script to observe distribution across worker instances. The demonstration handlers simulate work and do not send email or call external services.
+The script creates a retry-then-success job, a once-per-minute recurring report, and six longer jobs so you can watch assignment across the three workers. It prints the retry result and attempt count; the dashboard shows schedules, worker assignments, and events. The demo handlers simulate work and do not send email or call external services.
 
 Compose applies `restart: unless-stopped` to all five services, so Docker restarts a container after a process or host restart unless you explicitly stopped that service. This improves single-host recovery; it does not make the local PostgreSQL, Redis, or single-broker Kafka deployment highly available.
 
-For a local Maven check, use `mvn test package`. Testcontainers integration tests need a working Docker connection; they are skipped when Docker is unavailable. The app uses Flyway migrations and Hibernate schema validation. For an old local database created by an earlier prototype version, use a disposable database or migrate its data before applying this schema.
+For a local Maven check, use `mvn --batch-mode --no-transfer-progress verify`. Testcontainers integration tests need a working Docker connection; they are skipped when Docker is unavailable. The app uses Flyway migrations and Hibernate schema validation. For an old local database created by an earlier prototype version, use a disposable database or migrate its data before applying this schema.
 
 ## Configuration
 
