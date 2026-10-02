@@ -8,15 +8,12 @@ import com.taskforge.worker.Worker;
 import com.taskforge.worker.WorkerRepository;
 import com.taskforge.worker.WorkerRuntime;
 import com.taskforge.worker.WorkerStatus;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -44,7 +41,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @Testcontainers(disabledWithoutDocker=true)
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class PlatformContainerIntegrationTest {
-    private static ConfigurableApplicationContext contextToClose;
     // These containers are started by DynamicPropertySource below. Keeping them
     // out of JUnit's @Container lifecycle avoids the extension stopping them
     // while Spring is still resolving lazy property suppliers.
@@ -80,20 +76,12 @@ class PlatformContainerIntegrationTest {
     @Autowired KafkaTemplate<String,String> kafkaTemplate;
     @Autowired ObjectMapper mapper;
     @Autowired PlatformTransactionManager transactionManager;
-    @Autowired ConfigurableApplicationContext applicationContext;
     @Autowired MockMvc mockMvc;
 
-    @BeforeEach void rememberContextForOrderedShutdown(){contextToClose=applicationContext;}
-    @AfterAll static void closeApplicationContextBeforeContainersStop(){
-        if(contextToClose!=null)contextToClose.close();
-        if(kafka.isRunning())kafka.stop();
-        if(redis.isRunning())redis.stop();
-        if(postgres.isRunning())postgres.stop();
-    }
-
     @Test void outboxDeliveryWorkerExecutionAndDuplicateKafkaDeliveryAreDurable() throws Exception {
+        // Health details are intentionally hidden, so the aggregate readiness
+        // group is the supported public probe for PostgreSQL and Kafka status.
         mockMvc.perform(get("/actuator/health/readiness")).andExpect(status().isOk());
-        mockMvc.perform(get("/actuator/health/broker")).andExpect(status().isOk());
         assertTrue(workers.count()>0,"worker runtime should register itself at startup");
         User owner=users.save(new User("platform-integration@example.com","test-hash"));
         Job job=jobs.save(new Job(owner,"container e2e",null,"REPORT","{\"reportType\":\"TEST\"}",ScheduleType.IMMEDIATE,null,Instant.now(),JobPriority.HIGH,2,30));

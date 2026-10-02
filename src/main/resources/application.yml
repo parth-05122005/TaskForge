@@ -27,11 +27,22 @@ spring:
 server.error.include-message: never
 logging.pattern.level: "%5p [requestId:%X{requestId:-}]"
 management:
-  endpoints.web.exposure.include: health,info,metrics,prometheus
-  endpoint.health:
-    show-details: never
-    probes.enabled: true
-    group.readiness.include: readinessState,db,broker
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db,broker
+  prometheus:
+    metrics:
+      export:
+        enabled: true
 springdoc.swagger-ui.path: /swagger-ui.html
 taskforge:
   cors:
